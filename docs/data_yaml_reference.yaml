@@ -1,0 +1,23 @@
+# REFERENCE ONLY — what Roboflow's exported data.yaml should look like.
+# Your real one comes from the Roboflow export (DATASET.md step 4).
+# The 'names' list MUST be in this exact order to match config.yaml.
+#
+# Roboflow may write 'names' as a list (shown) or as an index map. Either is fine
+# as long as the ORDER is: title_block, revision_table, dimension, note,
+# gdt_symbol, surface_roughness.
+
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 6
+names:
+  - title_block
+  - revision_table
+  - dimension
+  - note
+  - gdt_symbol
+  - surface_roughness
+
+# If your exported order differs, EITHER fix it in Roboflow (rename/reorder classes)
+# OR edit config.yaml 'classes' to match the export. Both must agree.

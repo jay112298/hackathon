@@ -1,0 +1,76 @@
+# ============================================================================
+#  Central config — the "dataset-driven checklist" lives here.
+#  Change THIS file to retarget the tool (e.g. to the real company checklist)
+#  without touching any Python code.
+# ============================================================================
+
+# Path to your trained YOLO weights. After training on Colab, download best.pt
+# and drop it here. If the file is missing, the app still runs (shows NA rows).
+model_path: models/best.pt
+
+# Detection confidence threshold (0-1). Lower = more boxes, more false positives.
+conf_threshold: 0.25
+
+# Unified detector classes. MUST match the order in the data.yaml you train with.
+# Keep this list small so it trains well on limited public data.
+classes:
+  - title_block
+  - revision_table
+  - dimension
+  - note
+  - gdt_symbol
+  - surface_roughness
+
+# Text/format rules applied to the OCR of the detected title_block crop.
+# These need NO training — pure regex. Edit patterns for the real checklist later.
+rules:
+  drawing_number:
+    description: "Drawing number present & matches expected format"
+    # Demo pattern is generic. Company format 'TR X XXX XXXX' would be e.g.
+    #   '^TR\s?\d\s?[A-Z]{3}\s?\d{4}$'
+    pattern: '[A-Z]{2,3}[-\s]?\d?[-\s]?[A-Z]{2,4}[-\s]?\d{3,4}'
+  date:
+    description: "Date in DD/MM/YY format present"
+    pattern: '\d{2}/\d{2}/\d{2}'
+
+# Surface-roughness Ra values allowed by the company spec (micron). Informational.
+ra_allowed: [0.2, 0.4, 0.8, 1.6, 3.2, 6.3, 12.5]
+
+# ---------------------------------------------------------------------------
+# The checklist itself. Each item is auto-evaluated from detections / rules.
+#   type:
+#     presence          -> PASS if class detected >=1, else FAIL
+#     presence_optional -> PASS if detected, else NA  (not every drawing has it)
+#     count             -> PASS if >=1 (remark shows how many), else FAIL
+#     count_info        -> always INFO/PASS, remark shows how many
+#     rule              -> PASS/FAIL from regex on title_block OCR text
+# ---------------------------------------------------------------------------
+checklist:
+  - id: 1
+    point: "Title block present"
+    type: presence
+    requires_class: title_block
+  - id: 2
+    point: "Drawing number present & format valid"
+    type: rule
+    requires_rule: drawing_number
+  - id: 3
+    point: "Revision table present"
+    type: presence_optional
+    requires_class: revision_table
+  - id: 4
+    point: "Surface-roughness symbols present"
+    type: count
+    requires_class: surface_roughness
+  - id: 5
+    point: "GD&T symbols present"
+    type: count
+    requires_class: gdt_symbol
+  - id: 6
+    point: "Dimensions detected"
+    type: count_info
+    requires_class: dimension
+  - id: 7
+    point: "Notes block present"
+    type: presence_optional
+    requires_class: note

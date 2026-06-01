@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Model weights (large) - keep folder, ignore weights except a tracked sample if you add one
+models/*.pt
+
+# Datasets / exports (large) - never commit raw data
+data/dataset/
+data/exports/
+*.zip
+
+# Roboflow / training artifacts
+runs/
+*.cache
+
+# OS
+.DS_Store
+
+# Local Claude settings
+.claude/

@@ -1,0 +1,17 @@
+# Core
+ultralytics>=8.3.0      # YOLO11 train + inference (pulls torch, opencv)
+streamlit>=1.30         # demo UI
+pillow>=10.0            # image draw
+pyyaml>=6.0             # config.yaml
+pytesseract>=0.3.10     # OCR wrapper (needs system 'tesseract' binary installed too)
+
+# Dataset download (optional, for pulling Roboflow exports programmatically)
+roboflow>=1.1.0
+
+# NOTE: also install the tesseract BINARY (not just the python wrapper):
+#   macOS:  brew install tesseract
+#   ubuntu: sudo apt install tesseract-ocr
+#
+# NOTE on Python version: torch wheels may lag the newest Python. If `pip install
+# ultralytics` fails on Python 3.14, create a venv with Python 3.11/3.12:
+#   python3.11 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
