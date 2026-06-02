@@ -14,7 +14,7 @@ python scripts/check_setup.py     # everything OK except models/best.pt
 
 ## 1. Build the dataset (if not done) — Roboflow (~30 min)
 
-Follow `DATASET.md`. End result: a YOLOv11 **export snippet** + `data.yaml` whose
+Follow `BUILD_GUIDE.md` Chapter 3. End result: a YOLOv11 **export snippet** + `data.yaml` whose
 `names:` match `config.yaml` order. Compare against `docs/data_yaml_reference.yaml`.
 
 ## 2. Train — Google Colab (~1 hr, mostly waiting)

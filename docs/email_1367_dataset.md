@@ -45,6 +45,6 @@ Best regards,
 
 **Notes**
 - Send it **Day 1–2**; replies take days. Do NOT block on it — the merged Roboflow set
-  (see `DATASET.md`) is the real base.
+  (see `BUILD_GUIDE.md` Chapter 3) is the real base.
 - If it arrives later: it has all 9 categories in one source → you can retrain the one
   model on it for cleaner results, and expand `config.yaml` classes.
