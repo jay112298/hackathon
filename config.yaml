@@ -7,8 +7,9 @@
 # and drop it here. If missing, the app still runs (shows NA rows).
 model_path: models/best.pt
 
-# Detection confidence threshold (0-1). Lower = more boxes, more false positives.
-conf_threshold: 0.25
+# Detection confidence threshold (0-1). 0.30 = peak F1 from the trained model's
+# F1-confidence curve. Lower = more boxes (more false positives).
+conf_threshold: 0.30
 
 # Unified detector classes. MUST match the order in the trained data.yaml.
 # Final set after remapping the raw 635 Roboflow classes (see scripts/remap_dataset.py).
