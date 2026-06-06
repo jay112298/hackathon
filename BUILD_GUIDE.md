@@ -1074,3 +1074,180 @@ code changes elsewhere.
 
 Other future work: per-type GD&T classification, font/line-thickness checks (needs
 vector-CAD parsing, not image ML), multi-sheet revision linking.
+
+---
+
+## 23. Chapter 22 — Deep dive: the YOLO11n model (architecture, parameters, math)
+
+This chapter is the full technical answer to "what model is it, why, and how does it
+work" — grounded in the **actual architecture printout from our training run**. Read it
+to be able to defend every layer to a judge.
+
+### 22.1 Why an object detector, why YOLO, why the "n" size
+
+Our task: on one drawing, find **many** items and say **what** each is and **where**.
+That is **object detection** (multiple boxes + labels per image), not:
+- *classification* (one label for the whole image — can't localize), nor
+- *segmentation* (pixel masks — more than we need; we want boxes).
+
+Among detectors we chose **YOLO11** (Ultralytics, 2024/25) because:
+- **single-shot** — one forward pass predicts all boxes → fast (we measured **6.6 ms /
+  image** on a T4; runs fine on a laptop CPU for the demo).
+- **anchor-free + modern** — simpler, accurate, current SOTA-class for its size.
+- **one-line train/predict** + auto metrics/plots → ideal for a solo beginner.
+- **pretrained weights** → transfer learning makes a few-thousand-image dataset enough.
+
+Size variants trade accuracy vs speed/size: **n**(ano) < s < m < l < x. We used **`n`**
+because it is smallest/fastest, trains quickly on free Colab, and still hit mAP50 0.725.
+The whole model is **2.59 M parameters / ~5.3 MB**. (If accuracy mattered more than speed,
+`yolo11s`/`m` add layers + parameters for a few more mAP points and slower inference.)
+
+### 22.2 The three stages + our ACTUAL layer table
+
+Every YOLO is **backbone → neck → head**. Here is the exact table YOLO11n printed for our
+4-class model (read `from` = which previous layer feeds it, `params` = weights in that
+layer, `arguments` = channel sizes):
+
+```
+       from  n    params  module        arguments                       stage
+  0     -1   1       464  Conv          [3, 16, 3, 2]                  ┐
+  1     -1   1      4672  Conv          [16, 32, 3, 2]                 │
+  2     -1   1      6640  C3k2          [32, 64, 1, False, 0.25]       │
+  3     -1   1     36992  Conv          [64, 64, 3, 2]                 │ BACKBONE
+  4     -1   1     26080  C3k2          [64, 128, 1, False, 0.25]      │ (extract features,
+  5     -1   1    147712  Conv          [128, 128, 3, 2]               │  shrink H×W,
+  6     -1   1     87040  C3k2          [128, 128, 1, True]            │  grow channels)
+  7     -1   1    295424  Conv          [128, 256, 3, 2]               │
+  8     -1   1    346112  C3k2          [256, 256, 1, True]            │
+  9     -1   1    164608  SPPF          [256, 256, 5]                  │
+ 10     -1   1    249728  C2PSA         [256, 256, 1]                  ┘
+ 11     -1   1         0  Upsample      [None, 2, 'nearest']           ┐
+ 12  [-1,6]  1         0  Concat        [1]                            │
+ 13     -1   1    111296  C3k2          [384, 128, 1, False]           │ NECK
+ 14     -1   1         0  Upsample      [None, 2, 'nearest']           │ (fuse fine detail
+ 15  [-1,4]  1         0  Concat        [1]                            │  with big-picture
+ 16     -1   1     32096  C3k2          [256, 64, 1, False]            │  context across
+ 17     -1   1     36992  Conv          [64, 64, 3, 2]                 │  3 scales —
+ 18 [-1,13]  1         0  Concat        [1]                            │  PAN-FPN)
+ 19     -1   1     86720  C3k2          [192, 128, 1, False]           │
+ 20     -1   1    147712  Conv          [128, 128, 3, 2]               │
+ 21 [-1,10]  1         0  Concat        [1]                            │
+ 22     -1   1    378880  C3k2          [384, 256, 1, True]            ┘
+ 23 [16,19,22] 1   431452  Detect       [4, 16, None, [64, 128, 256]]   HEAD
+YOLO11n summary: 182 layers, 2,590,620 parameters, 6.4 GFLOPs
+```
+
+`from=-1` means "takes the previous layer." `from=[-1,6]` means "concatenate previous
+layer with layer 6" — those skip-connections are what fuse scales. Layers with `params=0`
+(Upsample, Concat) just reshape/merge — no learnable weights.
+
+### 22.3 What each module does
+
+- **Conv** `[in, out, k, s]` — a convolution (kernel `k`, stride `s`) + BatchNorm +
+  SiLU activation. Stride 2 **halves** height/width (downsampling). This is the basic
+  feature extractor: filters slide over the image learning edges → shapes → "looks like a
+  roughness symbol."
+- **C3k2** — YOLO11's main building block: a CSP (Cross-Stage-Partial) block that splits
+  the channels, runs some through small conv bottlenecks, and concatenates. Cheap,
+  gradient-friendly, the workhorse that does most of the "thinking." The `True/False` arg
+  toggles a deeper variant; `0.25` is the bottleneck ratio.
+- **SPPF (Spatial Pyramid Pooling – Fast)** — pools with several receptive sizes and
+  merges them, so one feature map "sees" both tiny symbols and large blocks at once.
+- **C2PSA** — YOLO11's lightweight **attention** block (Position-Sensitive Attention). It
+  lets the network weight the informative regions more — a small accuracy boost for little
+  cost.
+- **Upsample + Concat** — the neck doubles a low-res map's size and concatenates it with a
+  higher-res backbone map (and vice-versa). This **PAN-FPN** pattern mixes fine detail
+  (good for small objects) with semantic context (good for knowing *what* it is).
+- **Detect** — the output head (next section).
+
+### 22.4 Multi-scale, anchor-free head, and DFL
+
+The head reads **three feature maps** at different resolutions, called P3/P4/P5, with
+**strides 8 / 16 / 32**. At our 960×960 input that's grids of **120×120, 60×60, 30×30**.
+- P3 (120×120, fine) catches **small** objects — a tiny roughness symbol.
+- P5 (30×30, coarse) catches **large** objects — a big note block.
+This is why YOLO handles wildly different object sizes in one pass.
+
+The head args `[4, 16, None, [64,128,256]]` mean:
+- **4** = number of classes (our `nc`).
+- **16** = `reg_max` for **DFL** (Distribution Focal Loss). Instead of directly
+  regressing 4 raw box-edge distances, the head predicts, for each edge, a **probability
+  distribution over 16 bins**, then takes its expected value. This sub-pixel,
+  distribution-based regression is more accurate than predicting a single number.
+- **[64,128,256]** = the channel widths feeding the head from P3/P4/P5.
+
+**Anchor-free**: each grid cell predicts a box **directly** (no pre-defined anchor box
+templates to tune). Per cell the head outputs `4×reg_max` box numbers (= 64) + `nc` class
+scores. That 431,452-param Detect layer is the biggest single block — it carries the
+classification + box-regression conv branches across all three scales.
+
+### 22.5 Parameters & compute
+
+- **2,590,620 parameters** total. Most live in the deeper backbone C3k2/Conv blocks
+  (layers 7–10) and the Detect head (431k). Early layers are tiny (layer 0 = 464 params).
+- **6.4 GFLOPs** is Ultralytics' standard measure **at 640×640**; we trained at **960**,
+  so real compute is ~`(960/640)² ≈ 2.25×` higher (~14 GFLOPs/image). Bigger input = more
+  compute but better small-symbol detection — a deliberate trade we made because our key
+  classes (GD&T, roughness) are small.
+- **File size ~5.3 MB** = these 2.59M float weights (FP32) zipped, after the optimizer
+  state is stripped. Nano models are meant to be this small.
+
+### 22.6 The loss function (what training minimizes)
+
+YOLO11 minimizes a weighted sum of three losses (the weights are from our run's config):
+- **box loss — CIoU** (weight **7.5**): how well the predicted box overlaps the true box
+  (IoU-based, also accounts for center distance + aspect ratio).
+- **cls loss — BCE** (weight **0.5**): wrong class (binary cross-entropy per class).
+- **dfl loss** (weight **1.5**): sharpness/correctness of the DFL box-edge distributions.
+
+`total = 7.5·box + 0.5·cls + 1.5·dfl`. These are the `box_loss / cls_loss / dfl_loss`
+columns you watched drop each epoch.
+
+### 22.7 Optimizer & key hyperparameters (from our log)
+
+- **Optimizer: AdamW**, auto-selected (`optimizer=auto`), with **lr0 ≈ 0.00125**,
+  **momentum 0.9**, **weight_decay 0.0005**. AdamW = Adam with decoupled weight decay
+  (regularization that fights overfitting).
+- **3 warm-up epochs** (lr ramps up slowly at first to stabilize early training).
+- **imgsz 960, batch 16, epochs 80, patience 20** (early-stop). It stopped at epoch 74,
+  best at 54.
+- **AMP** (Automatic Mixed Precision) on — uses FP16 where safe to train faster + use less
+  GPU memory.
+
+> ML note — **learning rate** is the single most important knob: too high diverges, too
+> low crawls. `optimizer=auto` picked a sensible one for us; you rarely need to hand-tune
+> it for a demo.
+
+### 22.8 Transfer learning (why ~5k images was enough)
+
+The log shows **`Transferred 499/499 items from pretrained weights`** — we started from
+`yolo11n.pt` (pretrained on the large COCO dataset). The backbone already knew generic
+visual features (edges, textures, shapes), so we only had to **fine-tune** it to *our*
+classes. Training from scratch would need far more data and time; transfer learning is the
+reason a small drawing dataset trained to mAP50 0.725 in ~2 hours.
+
+### 22.9 Inference path (what runs in the app)
+
+`model.predict(image)`:
+1. **Forward pass** → raw class scores + DFL box distributions at P3/P4/P5.
+2. **Decode** distributions → pixel boxes `(x1,y1,x2,y2)`.
+3. **Confidence filter** → drop boxes below `conf` (we use **0.30**, the F1-peak).
+4. **NMS (Non-Max Suppression)** at **IoU 0.7** → remove duplicate overlapping boxes for
+   the same object, keep the most confident.
+5. Output = the clean detection list `src/detect.py` returns as `{cls, conf, xyxy}`.
+
+No labels, no gradients — just one fast forward pass + cleanup.
+
+### 22.10 Alternatives we rejected
+
+| Model | Why not (for us) |
+|---|---|
+| Faster R-CNN | two-stage, accurate but slower + heavier to set up |
+| RetinaNet / SSD | fine, but less tooling + community than Ultralytics YOLO |
+| Plain CNN classifier | one label per image — can't localize multiple objects |
+| Vision-LLM (GPT-4V) | no trained model to show judges; slower + cost per call |
+| YOLO11 s/m/l/x | more accurate but slower + bigger; overkill for a demo on free GPU |
+
+**Bottom line:** YOLO11n = the right balance of accuracy, speed, tiny size, and ease for
+a solo hackathon build — and the numbers above prove it learned the task.
