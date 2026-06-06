@@ -26,24 +26,36 @@ def _load_model(model_path: str):
     return YOLO(model_path)
 
 
-def detect(image_path: str, model_path: str, conf: float = 0.25):
-    """Run detection. Returns (detections, status_message)."""
+def detect(image_path: str, model_path: str, conf: float = 0.25, class_conf=None):
+    """Run detection. Returns (detections, status_message).
+
+    class_conf: optional {class_name: threshold} to override `conf` per class
+    (e.g. a lower threshold for a weak class like 'note'). We predict at the
+    lowest needed threshold, then filter each box by its class's threshold.
+    """
     model = _load_model(model_path)
     if model is None:
         if not os.path.exists(model_path):
             return [], f"No model at '{model_path}' — train on Colab, drop best.pt here."
         return [], "ultralytics not installed — run: pip install ultralytics"
 
-    results = model.predict(image_path, conf=conf, verbose=False)
+    class_conf = class_conf or {}
+    base = min([conf] + list(class_conf.values()))  # predict at the lowest needed
+
+    results = model.predict(image_path, conf=base, verbose=False)
     names = model.names  # {index: class_name}
     dets = []
     for r in results:
         for box in r.boxes:
             cls_idx = int(box.cls[0])
+            cls_name = names.get(cls_idx, str(cls_idx))
+            c = float(box.conf[0])
+            if c < class_conf.get(cls_name, conf):   # apply per-class threshold
+                continue
             dets.append(
                 {
-                    "cls": names.get(cls_idx, str(cls_idx)),
-                    "conf": float(box.conf[0]),
+                    "cls": cls_name,
+                    "conf": c,
                     "xyxy": [float(v) for v in box.xyxy[0].tolist()],
                 }
             )

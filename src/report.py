@@ -10,16 +10,37 @@ from .detect import count_by_class
 from .rules import check_rule
 
 
-def build_report(config: dict, detections: list, ocr_text: str, model_loaded: bool):
+def build_report(config: dict, detections: list, ocr_text: str, model_loaded: bool,
+                 ra_readings: list | None = None):
     counts = count_by_class(detections)
     rules_cfg = config.get("rules", {})
+    ra_readings = ra_readings or []
     rows = []
 
     for item in config["checklist"]:
         itype = item["type"]
         status, remarks = "NA", ""
 
-        if itype in ("presence", "presence_optional", "count", "count_info"):
+        if itype == "ra_values":
+            if not model_loaded:
+                status, remarks = "NA", "model not loaded"
+            elif not ra_readings:
+                status, remarks = "NA", "no roughness symbols"
+            else:
+                read = [r for r in ra_readings if r["value"] is not None]
+                valid = [r for r in ra_readings if r["valid"]]
+                if not read:
+                    status = "INFO"
+                    remarks = f"{len(ra_readings)} symbols, Ra unreadable"
+                elif len(valid) == len(read):
+                    status = "PASS"
+                    remarks = "Ra " + ", ".join(str(r["matched"]) for r in valid) + " (all valid)"
+                else:
+                    bad = [str(r['value']) for r in read if not r["valid"]]
+                    status = "FAIL"
+                    remarks = f"{len(valid)}/{len(read)} valid; not in spec: {', '.join(bad)}"
+
+        elif itype in ("presence", "presence_optional", "count", "count_info"):
             cls = item["requires_class"]
             n = counts.get(cls, 0)
             if not model_loaded:

@@ -1251,3 +1251,68 @@ No labels, no gradients — just one fast forward pass + cleanup.
 
 **Bottom line:** YOLO11n = the right balance of accuracy, speed, tiny size, and ease for
 a solo hackathon build — and the numbers above prove it learned the task.
+
+---
+
+## 24. Chapter 23 — Improvements: value-checking, per-class thresholds, UI
+
+After the base demo worked, we upgraded it from **"detects presence"** to **"verifies
+values"** and made the UI demo-grade. All without retraining.
+
+### 23.1 Value-checking: surface-roughness Ra (`src/values.py`)
+The model gives us **where** each roughness symbol is. To check the *value*, we crop the
+area around each box, OCR the number, and validate it against the allowed Ra set.
+
+- `src/ocr.py → ocr_box_padded()` — expands the tiny symbol box (so the "Ra 0.8" text
+  beside it is captured), grayscales + upscales the crop, and OCRs with a **digit
+  whitelist** (`tessedit_char_whitelist=0123456789.`, `--psm 7` = single line).
+- `src/values.py → read_ra_values()` — regex-extracts numbers, keeps a plausible one
+  (`0 < v ≤ 100`), and matches it to `config.ra_allowed` within a tolerance.
+- `src/report.py` — new check type **`ra_values`**: PASS if all readable Ra are in spec,
+  FAIL if any aren't, INFO if symbols found but Ra unreadable, NA if no symbols.
+
+This is the headline upgrade: row 3 now reports e.g. `PASS — Ra 0.8, 1.6 (all valid)`,
+not just "present". OCR on tiny symbols is imperfect, so it degrades to "unreadable"
+rather than lying.
+
+> Why crop-then-OCR instead of OCRing the whole page? Same reason as the title block:
+> a small, padded crop gives tesseract clean input. Whole-sheet OCR is noisy garbage.
+
+### 23.2 Per-class confidence (`config.yaml: class_conf`, `src/detect.py`)
+One global threshold is a compromise — `note` is weak (wants a low bar), `dimension` is
+strong. Now `config.yaml` has:
+```yaml
+class_conf:
+  note: 0.15
+  gdt_symbol: 0.25
+```
+`detect()` predicts at the **lowest** needed threshold, then filters each box by its
+class's own threshold (`class_conf.get(cls, conf_threshold)`). Weak classes surface;
+strong classes stay clean.
+
+### 23.3 Less clutter (`src/annotate.py`)
+Drawings have hundreds of dimensions → boxes everywhere. Now dimensions draw as **thin,
+label-less** rectangles; symbols (gdt/roughness/note) get **bold boxes + labels**. The
+app sidebar also has **per-class show/hide checkboxes** (`pipeline.run(show_classes=...)`
+filters *drawing only* — detection + checklist still use everything).
+
+### 23.4 UI overhaul (`app.py`)
+- **Sidebar**: confidence slider + per-class visibility toggles + model class list.
+- **Verdict banner**: PASS / NEEDS REVIEW / "no detections" hint.
+- **Metric row**: checks passed, total detections, confidence + progress bar.
+- **Tabs**: Checklist · Detections (+ per-class bar chart) · Values (Ra table) · Debug.
+- **Downloads**: CSV, **HTML report** (`src/report_html.py` — self-contained, base64
+  image embedded, print-to-PDF in browser, zero dependency), annotated PNG.
+- **Error handling**: the whole pipeline call is wrapped in `try/except` → a bad image
+  shows a friendly message instead of crashing on stage.
+- Fixed the Streamlit 1.58 deprecation (`use_container_width`).
+
+> 🐍 **Python note — list-comprehension filter for the sidebar:**
+> `show = [c for c in all_classes if st.checkbox(c, value=True)]` builds the list of
+> ticked classes in one line — each `st.checkbox` returns True/False.
+
+### 23.5 Still TODO (need labeling/retrain — your Roboflow work)
+- **title_block + drawing-number/date OCR check** — hand-label `title_block`, retrain,
+  uncomment the 2 rows in `config.yaml`. Code is already built and waiting.
+- **Boost `note` / `gdt_symbol`** — more labels or a bigger model (`yolo11s`).
+- **PDF/multi-page input, batch mode** — nice-to-have, not required for the demo.

@@ -24,7 +24,11 @@ def annotate(image_path: str, detections: list) -> Image.Image:
     for d in detections:
         x1, y1, x2, y2 = d["xyxy"]
         c = _color(d["cls"])
+        # dimensions are numerous + tiny -> thin box, no text label (less clutter)
+        if d["cls"] == "dimension":
+            draw.rectangle([x1, y1, x2, y2], outline=c, width=1)
+            continue
         draw.rectangle([x1, y1, x2, y2], outline=c, width=3)
-        label = f"{d['cls']} {d['conf']:.2f}"
-        draw.text((x1 + 2, max(0, y1 - 12)), label, fill=c, font=font)
+        draw.text((x1 + 2, max(0, y1 - 12)), f"{d['cls']} {d['conf']:.2f}",
+                  fill=c, font=font)
     return img

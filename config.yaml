@@ -11,6 +11,13 @@ model_path: models/best.pt
 # F1-confidence curve. Lower = more boxes (more false positives).
 conf_threshold: 0.30
 
+# Per-class threshold overrides. Weak classes (e.g. note) get a lower bar so
+# they aren't missed; strong classes can stay high. Anything not listed uses
+# conf_threshold above.
+class_conf:
+  note: 0.15
+  gdt_symbol: 0.25
+
 # Unified detector classes. MUST match the order in the trained data.yaml.
 # Final set after remapping the raw 635 Roboflow classes (see scripts/remap_dataset.py).
 # NOTE: no title_block yet (not labeled). Hand-label it later to re-enable the
@@ -51,10 +58,14 @@ checklist:
     type: count
     requires_class: surface_roughness
   - id: 3
+    point: "Surface-roughness Ra values valid (per spec)"
+    type: ra_values
+    requires_class: surface_roughness
+  - id: 4
     point: "Dimensions detected"
     type: count_info
     requires_class: dimension
-  - id: 4
+  - id: 5
     point: "Notes block present"
     type: presence_optional
     requires_class: note
