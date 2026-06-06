@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 import yaml
 
-from .detect import detect, first_box
+from .detect import detect, first_box, count_by_class
 from .ocr import ocr_region
 from .report import build_report
 from .annotate import annotate
@@ -40,10 +40,13 @@ def run(image_path: str, config: dict | None = None):
     # 4) annotate
     annotated = annotate(image_path, detections)
 
+    counts = count_by_class(detections)
+
     debug = {
         "detection_status": det_status,
         "ocr_status": ocr_status,
         "ocr_text": ocr_text.strip(),
         "n_detections": len(detections),
+        "counts": counts,
     }
     return annotated, rows, debug

@@ -899,3 +899,178 @@ Do these in order and you've built the whole thing:
 10. [ ] Prepare 3–4 demo drawings (PASS / FAIL / NA), screenshot metrics, rehearse the pitch.
 
 If you can do these without re-reading, you understand the project. That's the goal.
+
+---
+
+# PART 3 — What we ACTUALLY built and trained (the real run)
+
+Chapters 1–17 are the general method. This part is the **logbook of our actual run** —
+the real data mess we hit, the real numbers, and how the trained model plugs into the
+app. Read it to understand the project *as it really exists in this repo*.
+
+---
+
+## 19. Chapter 18 — The real dataset (635 raw classes → 4)
+
+We merged three Roboflow datasets (`symbols`, `eng drawing`, `gdt symbols`) into one
+project. Reality bit us:
+
+- Roboflow's **Modify Classes** (to rename/merge labels) is a **paid** feature → we
+  couldn't collapse classes in the UI.
+- After Generate + export, the dataset had **`nc = 635` classes** — not the handful we
+  expected. The merge kept every raw label:
+  - **~255 pure numbers** (`100`, `-0.800`, `24.800`) = dimension *values*.
+  - **~340 cryptic zone codes** (`KZ1`, `GBZ12`, `YBZ7`, `RFZ1`, `Lc-700`, single
+    letters `A`–`H`, `column-*`) = annotations from a foreign dataset, useless to us.
+  - **~40 real symbol names** (`Flatness`, `Perpendicularity`, `Roughness`, `Diameter`,
+    `Notes`, `position`…).
+
+**Free fix = remap the label files in code** (`scripts/remap_dataset.py`). Instead of a
+635-line table, we classify each raw name by **rule**:
+
+```python
+_NUMBER = re.compile(r"-?\d+(\.\d+)?-?$")     # 100, -0.800, 1.3-
+def classify(name):
+    n = name.strip(); low = n.lower()
+    if _NUMBER.match(n):           return "dimension"     # numbers are dimension values
+    if low in _DIM_WORDS:          return "dimension"     # diameter, radius, chamfer...
+    if low in _GDT_WORDS:          return "gdt_symbol"    # flatness, runout, position...
+    if "roughness" in low:         return "surface_roughness"
+    if low in ("note", "notes"):   return "note"
+    return None                                           # drop zone codes / junk
+```
+
+The remap rewrites every YOLO label `.txt` (only the class-id on each line) and rewrites
+`data.yaml`. Run once in Colab after download:
+
+```python
+remap(dataset.location)
+```
+
+> 🐍 **Python note — `re.compile(r"...")`** Pre-builds a regex pattern for reuse. The `r`
+> prefix is a *raw string* so backslashes (`\d` = digit) aren't treated as escapes.
+> `.match(s)` tests if the pattern matches at the **start** of `s`; the trailing `$`
+> means "to the end" too. So `_NUMBER.match("100")` is truthy, `_NUMBER.match("KZ1")` is
+> not.
+
+**Real result of the remap on our data:**
+```
+kept 109811 boxes, dropped 48766
+dimension 87744 | surface_roughness 13868 | gdt_symbol 7616 | note 583
+```
+No `title_block` existed (we hadn't hand-labeled it) → final model = **4 classes**.
+`config.yaml` was set to match: `[dimension, note, gdt_symbol, surface_roughness]`.
+
+**Lesson:** public/merged datasets are messy. The valuable skill is **cleaning labels in
+code** — a small, rule-based script beats manual work and is reproducible.
+
+---
+
+## 20. Chapter 19 — The training run + reading the results
+
+We trained YOLO11n on Colab's free T4 GPU. Split after generation was ~2.5k train / 223
+val / 163 test; images at 960×960; gentle augmentation (rotate ±5°, brightness, blur —
+**no flips**, text would mirror).
+
+Command (Chapter 13 cell), `epochs=80, imgsz=960, batch=16, patience=20`. It
+**early-stopped at epoch 74** (best at epoch 54) — `patience` saw no val improvement for
+20 epochs and stopped. ~2 hours wall-clock.
+
+### Final metrics (validation)
+```
+              mAP50   mAP50-95
+all           0.725   0.460
+dimension     0.927   0.686     # excellent (4298 instances)
+surface_roughness 0.875 0.454   # strong   (168)
+gdt_symbol    0.614   0.415     # decent   (132)
+note          0.482   0.284     # weak — but only 17 val instances => noisy metric
+```
+
+### How to read our four result plots
+- **Loss curves (train + val box/cls/dfl):** all slope **down** and the val curves
+  *track* the train curves. That means **learning, no overfitting** (if val turned up
+  while train kept dropping, that's overfitting).
+- **mAP50 curve:** rises then **plateaus ~0.72** → more epochs wouldn't help much (why
+  early-stop fired).
+- **Confusion matrix:** strong diagonal (dimension 3873, roughness 149, gdt 78, note 10).
+  The main off-diagonal is the **background** column/row — e.g. 605 real dimensions
+  predicted as background (missed) and 417 background predicted as dimension (false
+  alarms). Normal for dense, tiny dimension text on a big sheet. Symbols barely confuse
+  with each other.
+- **F1-confidence curve:** the bold "all classes" line peaks **F1 0.74 at confidence
+  0.306**. That's the single most useful number for deployment →
+
+### Why `conf_threshold: 0.30`
+The F1 curve says detection quality is best around **0.30** confidence, so we set
+`config.yaml: conf_threshold: 0.30`. Below it = too many false boxes; well above it = the
+weak `note` class disappears. This is a **data-derived setting**, not a guess.
+
+### Is a 5 MB model correct?
+Yes. YOLO11n ("nano") has only **2.6M parameters**; the saved `best.pt` is ~5.3 MB. The
+training log literally prints `Optimizer stripped from best.pt, 5.5MB`. Small = the model
+size we chose, not a corrupted file. (You can verify it's a real checkpoint: it's a ZIP
+archive containing `data.pkl` + weight tensors.)
+
+---
+
+## 21. Chapter 20 — Wiring the model + the demo app features
+
+### Plugging in the model
+`best.pt` goes in `models/` (the path in `config.yaml: model_path`). `src/detect.py`
+lazy-loads it once (cached) and the whole pipeline lights up. `models/*.pt` is
+**gitignored** (too big for git) — the model is rebuilt from Colab, not version-tracked.
+
+Local setup that worked (note: **torch has no Python 3.14 wheels yet**, so we used 3.12):
+```bash
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python scripts/check_setup.py     # all green
+./scripts/serve.sh                # launch the app
+```
+
+### What `app.py` shows (demo-grade)
+The pipeline returns `(annotated_image, checklist_rows, debug)` where `debug` now also
+carries **per-class detection counts** (added in `src/pipeline.py` via `count_by_class`).
+The app turns that into:
+- a **verdict banner** — `PASS` (no fails), `NEEDS REVIEW` (some fail), or a "no
+  detections, lower confidence" hint;
+- **metrics** — checks passed + total detections + a progress bar;
+- the **annotated drawing** (boxes) with a **Download PNG** button;
+- the **checklist table** (Sl.No / Check point / Status / Remarks) with **Download CSV**;
+- a **per-class bar chart** of what was detected;
+- a confidence **slider** in the sidebar (re-runs detection live — great for the demo);
+- a **Debug** expander (raw status + OCR text).
+
+> 🐍 **Python note — `st.stop()`** Streamlit reruns the whole script top-to-bottom on
+> every interaction. `if not uploaded: st.stop()` halts the run early when there's no
+> file, so the rest doesn't execute. Cleaner than wrapping everything in one big `if`.
+
+> 🐍 **Python note — `io.BytesIO()`** An in-memory binary "file." We save the annotated
+> PIL image into it (`img.save(buf, format="PNG")`) and hand the bytes to Streamlit's
+> download button — no temp file on disk needed.
+
+### One Streamlit gotcha we fixed
+`st.image(..., use_column_width=True)` is **deprecated/removed** in Streamlit 1.58. The
+current arg is **`use_container_width=True`**. APIs drift between versions — when a widget
+errors, check the installed version's docs.
+
+---
+
+## 22. Chapter 21 — Limitations & what's next
+
+Honest state of the model (say this in the pitch — judges respect it):
+- **Strong:** `dimension`, `surface_roughness`. **Decent:** `gdt_symbol`. **Weak:**
+  `note` (only 583 train / 17 val boxes — too few to learn well).
+- **No `title_block`** yet → the **drawing-number / date OCR check is dormant** (the two
+  commented rows in `config.yaml`). The OCR + regex code is built and ready; it just needs
+  a `title_block` class to crop.
+- Public drawings ≠ company turbine drawings → this is a **proof of concept**;
+  config-driven design lets the real checklist + a company-trained model drop in later.
+
+**Highest-value next step:** hand-label `title_block` on ~30–50 sheets in Roboflow,
+regenerate, retrain, then **uncomment the two title-block rows** in `config.yaml`. That
+re-activates the OCR drawing-number check — the most "checklist-like" feature — with zero
+code changes elsewhere.
+
+Other future work: per-type GD&T classification, font/line-thickness checks (needs
+vector-CAD parsing, not image ML), multi-sheet revision linking.
