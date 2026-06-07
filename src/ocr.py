@@ -37,37 +37,47 @@ def ocr_region(image_path: str, box=None):
     return _ocr_pil(img)
 
 
-def ocr_box_padded(image_path: str, box, pad_frac: float = 0.6):
-    """OCR an expanded crop around a small symbol box.
+def _read_score(text: str) -> int:
+    """Rank an OCR read: count digits, bonus for a decimal point (Ra has decimals)."""
+    return sum(ch.isdigit() for ch in text) + (2 if "." in text else 0)
 
-    Roughness/symbol boxes are tiny and the value (e.g. 'Ra 0.8') sits next to
-    the symbol, so we pad the box outward before OCR. pad_frac=0.6 grows each
-    side by 60% of the box size. Upscales the crop to help OCR on small text.
-    Returns (text, status).
+
+def ocr_box_padded(image_path: str, box, pad_frac: float = 1.2):
+    """OCR an expanded, cleaned-up crop around a small symbol box.
+
+    Roughness Ra text (e.g. '3.2') is tiny — the decimal point and 2nd digit get
+    lost. To fix: pad the box generously, upscale a lot, binarize for crisp
+    glyphs, then try several page-seg modes (with and without a digit whitelist)
+    and keep the richest read. Returns (text, status).
     """
+    from PIL import ImageOps
     try:
-        img = Image.open(image_path).convert("L")  # grayscale helps OCR
+        img = Image.open(image_path).convert("L")  # grayscale
     except Exception as e:  # noqa: BLE001
         return "", f"image open error: {e}"
+
     W, H = img.size
     x1, y1, x2, y2 = [float(v) for v in box]
     bw, bh = x2 - x1, y2 - y1
     px, py = bw * pad_frac, bh * pad_frac
     crop = img.crop((max(0, int(x1 - px)), max(0, int(y1 - py)),
                      min(W, int(x2 + px)), min(H, int(y2 + py))))
-    # upscale small crops so tesseract sees bigger glyphs
-    if crop.width < 300:
-        scale = max(2, int(300 / max(1, crop.width)))
-        crop = crop.resize((crop.width * scale, crop.height * scale))
-    # roughness Ra text is small + rotated/varied -> try several page-seg modes,
-    # keep the read with the most digits. Whitelist digits + dot.
+
+    crop = ImageOps.autocontrast(crop)
+    # upscale hard so small glyphs (and the dot) survive
+    if crop.width < 480:
+        s = max(3, round(480 / max(1, crop.width)))
+        crop = crop.resize((crop.width * s, crop.height * s), Image.LANCZOS)
+    binar = crop.point(lambda p: 255 if p > 128 else 0)  # high-contrast B/W
+
     whitelist = "-c tessedit_char_whitelist=0123456789."
     best = ""
-    for psm in (7, 6, 8, 11, 13):
-        text, status = _ocr_pil(crop, config=f"--psm {psm} {whitelist}")
-        if "not installed" in status or "missing" in status:
-            return "", status            # tooling absent -> stop early
-        digits = sum(ch.isdigit() for ch in text)
-        if digits > sum(ch.isdigit() for ch in best):
-            best = text
+    for image in (binar, crop):
+        for psm in (7, 6, 8, 13):
+            for wl in (whitelist, ""):
+                text, status = _ocr_pil(image, config=f"--psm {psm} {wl}".strip())
+                if "not installed" in status or "missing" in status:
+                    return "", status   # tooling absent -> stop
+                if _read_score(text) > _read_score(best):
+                    best = text
     return best, "ok"

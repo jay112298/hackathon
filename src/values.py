@@ -27,27 +27,45 @@ def read_ra_values(image_path, roughness_boxes, ra_allowed):
     value   = parsed float (or None if nothing readable)
     matched = the allowed Ra it equals (or None)
     valid   = matched is not None
+
+    Two-pass matching, because OCR drops decimal points on tiny text:
+      1) parse a float and match it to an allowed Ra (within tolerance), then
+      2) digit-string snap — compare the read's digits (dots removed) to each
+         allowed Ra's digits, so '32' -> 3.2, '63' -> 6.3, '125' -> 12.5.
     """
+    # map of "digits-only" -> allowed value, e.g. {'32':3.2, '63':6.3, '125':12.5}
+    by_digits = {str(a).replace(".", ""): a for a in ra_allowed}
+
     readings = []
     for box in roughness_boxes:
         text, _ = ocr_box_padded(image_path, box)
-        nums = _NUM.findall(text or "")
+        t = text or ""
         value, matched = None, None
-        for tok in nums:
+
+        # pass 1: float match
+        for tok in _NUM.findall(t):
             try:
                 v = float(tok)
             except ValueError:
                 continue
-            if v <= 0 or v > 100:      # ignore junk reads
+            if v <= 0 or v > 200:
                 continue
             m = _nearest_allowed(v, ra_allowed)
-            if m is not None:          # prefer a value that matches the spec
+            if m is not None:
                 value, matched = v, m
                 break
             if value is None:
-                value = v              # keep first plausible number as fallback
+                value = v
+
+        # pass 2: digit-string snap (recovers a dropped decimal point)
+        if matched is None:
+            ds = "".join(c for c in t if c.isdigit())
+            if ds in by_digits:
+                matched = by_digits[ds]
+                value = matched
+
         readings.append({
-            "raw": (text or "").strip(),
+            "raw": t.strip(),
             "value": value,
             "matched": matched,
             "valid": matched is not None,
