@@ -33,10 +33,11 @@ def main():
     annotated.save(args.out)
 
     # checklist table
-    print(f"\n{'Sl':<3}{'Check point':<40}{'Status':<8}Remarks")
-    print("-" * 80)
+    print(f"\n{'Sl':<3}{'Check point':<42}{'Detected':<14}{'Required':<28}Result")
+    print("-" * 105)
     for r in rows:
-        print(f"{r['id']:<3}{r['point']:<40}{r['status']:<8}{r['remarks']}")
+        print(f"{r['id']:<3}{r['point']:<42}{str(r['detected']):<14}"
+              f"{str(r['required']):<28}{r['status']}")
 
     passed = sum(1 for r in rows if r["status"] == "PASS")
     failed = sum(1 for r in rows if r["status"] == "FAIL")

@@ -37,7 +37,10 @@ def build_html(rows, annotated_img, n_detections, source_name="drawing"):
         st = r["status"]
         trs.append(
             f"<tr><td>{r['id']}</td><td>{html.escape(r['point'])}</td>"
-            f"<td class='{st}'>{st}</td><td>{html.escape(str(r['remarks']))}</td></tr>"
+            f"<td>{html.escape(str(r['detected']))}</td>"
+            f"<td>{html.escape(str(r['values']))}</td>"
+            f"<td>{html.escape(str(r['required']))}</td>"
+            f"<td class='{st}'>{st}</td></tr>"
         )
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -47,7 +50,8 @@ def build_html(rows, annotated_img, n_detections, source_name="drawing"):
 <p class="sub">Source: {html.escape(source_name)} &nbsp;|&nbsp; Generated: {ts}
  &nbsp;|&nbsp; Detections: {n_detections}</p>
 <p class="score">Verdict: {verdict} &nbsp; ({passed}/{actionable} checks passed)</p>
-<table><thead><tr><th>Sl.No</th><th>Check point</th><th>Status</th><th>Remarks</th></tr></thead>
+<table><thead><tr><th>Sl.No</th><th>Check point</th><th>Detected</th>
+<th>Detected values</th><th>Required</th><th>Result</th></tr></thead>
 <tbody>{''.join(trs)}</tbody></table>
 <h3>Annotated drawing</h3>
 <img src="data:image/png;base64,{b64}">

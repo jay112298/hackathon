@@ -62,7 +62,7 @@ checklist:
     type: count
     requires_class: surface_roughness
   - id: 3
-    point: "Surface-roughness Ra values valid (per spec)"
+    point: "Surface-roughness Ra values (read vs spec)"
     type: ra_values
     requires_class: surface_roughness
   - id: 4

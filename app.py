@@ -34,9 +34,9 @@ table.cl th{background:#f4f6f8;font-weight:600}
 def rows_to_csv(rows) -> str:
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["Sl.No", "Check point", "Status", "Remarks"])
+    w.writerow(["Sl.No", "Check point", "Detected", "Detected values", "Required", "Result"])
     for r in rows:
-        w.writerow([r["id"], r["point"], r["status"], r["remarks"]])
+        w.writerow([r["id"], r["point"], r["detected"], r["values"], r["required"], r["status"]])
     return buf.getvalue()
 
 
@@ -46,11 +46,14 @@ def checklist_html(rows) -> str:
         s = r["status"]
         trs += (f"<tr style='background:{_BG.get(s,'#fff')}'>"
                 f"<td>{r['id']}</td><td>{html.escape(r['point'])}</td>"
+                f"<td>{html.escape(str(r['detected']))}</td>"
+                f"<td>{html.escape(str(r['values']))}</td>"
+                f"<td>{html.escape(str(r['required']))}</td>"
                 f"<td style='color:{_COLOR[s]};font-weight:700'>{_EMOJI.get(s,'')} {s}</td>"
-                f"<td>{html.escape(str(r['remarks']))}</td></tr>")
+                f"</tr>")
     return ("<table class='cl'><thead><tr><th>#</th><th>Check point</th>"
-            "<th>Status</th><th>Remarks</th></tr></thead><tbody>"
-            f"{trs}</tbody></table>")
+            "<th>Detected</th><th>Detected values</th><th>Required</th><th>Result</th>"
+            f"</tr></thead><tbody>{trs}</tbody></table>")
 
 
 def png_bytes(img) -> bytes:
