@@ -56,8 +56,18 @@ def ocr_box_padded(image_path: str, box, pad_frac: float = 0.6):
     crop = img.crop((max(0, int(x1 - px)), max(0, int(y1 - py)),
                      min(W, int(x2 + px)), min(H, int(y2 + py))))
     # upscale small crops so tesseract sees bigger glyphs
-    if crop.width < 200:
-        scale = max(1, int(200 / max(1, crop.width)))
+    if crop.width < 300:
+        scale = max(2, int(300 / max(1, crop.width)))
         crop = crop.resize((crop.width * scale, crop.height * scale))
-    # whitelist digits + dot for a roughness value read
-    return _ocr_pil(crop, config="--psm 7 -c tessedit_char_whitelist=0123456789.")
+    # roughness Ra text is small + rotated/varied -> try several page-seg modes,
+    # keep the read with the most digits. Whitelist digits + dot.
+    whitelist = "-c tessedit_char_whitelist=0123456789."
+    best = ""
+    for psm in (7, 6, 8, 11, 13):
+        text, status = _ocr_pil(crop, config=f"--psm {psm} {whitelist}")
+        if "not installed" in status or "missing" in status:
+            return "", status            # tooling absent -> stop early
+        digits = sum(ch.isdigit() for ch in text)
+        if digits > sum(ch.isdigit() for ch in best):
+            best = text
+    return best, "ok"

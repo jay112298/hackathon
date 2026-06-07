@@ -37,8 +37,12 @@ rules:
   date:
     pattern: '\d{2}/\d{2}/\d{2}'
 
-# Surface-roughness Ra values allowed by the company spec (micron). Informational.
+# Surface-roughness Ra values allowed by the company spec (micron).
 ra_allowed: [0.2, 0.4, 0.8, 1.6, 3.2, 6.3, 12.5]
+# ra_strict: true  => Ra check is PASS/FAIL against ra_allowed (real company use).
+# ra_strict: false => Ra check is INFORMATIONAL (reads values, flags spec-matches,
+#   never fails). Keep false for public demo drawings (their Ra differ + OCR noisy).
+ra_strict: false
 
 # ---------------------------------------------------------------------------
 # The checklist. Each item auto-evaluated from detections / rules.

@@ -22,6 +22,7 @@ def build_report(config: dict, detections: list, ocr_text: str, model_loaded: bo
         status, remarks = "NA", ""
 
         if itype == "ra_values":
+            strict = config.get("ra_strict", False)
             if not model_loaded:
                 status, remarks = "NA", "model not loaded"
             elif not ra_readings:
@@ -31,14 +32,20 @@ def build_report(config: dict, detections: list, ocr_text: str, model_loaded: bo
                 valid = [r for r in ra_readings if r["valid"]]
                 if not read:
                     status = "INFO"
-                    remarks = f"{len(ra_readings)} symbols, Ra unreadable"
-                elif len(valid) == len(read):
-                    status = "PASS"
-                    remarks = "Ra " + ", ".join(str(r["matched"]) for r in valid) + " (all valid)"
+                    remarks = f"{len(ra_readings)} symbols; Ra text unreadable"
+                elif strict:
+                    if len(valid) == len(read):
+                        status = "PASS"
+                        remarks = "Ra " + ", ".join(str(r["matched"]) for r in valid) + " (all valid)"
+                    else:
+                        bad = [str(r["value"]) for r in read if not r["valid"]]
+                        status = "FAIL"
+                        remarks = f"{len(valid)}/{len(read)} valid; not in spec: {', '.join(bad)}"
                 else:
-                    bad = [str(r['value']) for r in read if not r["valid"]]
-                    status = "FAIL"
-                    remarks = f"{len(valid)}/{len(read)} valid; not in spec: {', '.join(bad)}"
+                    vals = ", ".join(str(r["value"]) for r in read)
+                    status = "INFO"
+                    remarks = (f"read Ra {vals} from {len(read)}/{len(ra_readings)} symbols; "
+                               f"{len(valid)} match spec")
 
         elif itype in ("presence", "presence_optional", "count", "count_info"):
             cls = item["requires_class"]
