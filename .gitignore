@@ -22,3 +22,6 @@ runs/
 
 # Local Claude settings
 .claude/
+
+# Roboflow local dataset pulls
+data/roboflow/

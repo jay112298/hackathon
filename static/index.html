@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DrawQC — Engineering Drawing Checklist</title>
+<style>
+:root{
+  --bg:#f2f5f9; --card:#ffffff; --ink:#16212b; --muted:#5b6b7b; --line:#dde5ed;
+  --accent:#1d4ed8; --accent-soft:#e8efff;
+  --pass:#15803d; --pass-bg:#e9f7ee; --fail:#b91c1c; --fail-bg:#fdeceb;
+  --info:#1d4ed8; --info-bg:#e8efff; --na:#8195a8; --na-bg:#f4f7fa;
+  --navy:#0e1c2f; --shadow:0 1px 3px rgba(16,24,40,.08),0 4px 16px rgba(16,24,40,.06);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+     background:var(--bg);color:var(--ink)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* ---------- header ---------- */
+header{background:var(--navy);color:#fff;padding:18px 28px;display:flex;align-items:center;gap:16px;
+  background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);
+  background-size:22px 22px}
+header .logo{font-size:21px;font-weight:700;letter-spacing:.3px}
+header .logo span{color:#7fb1ff}
+header .sub{color:#9fb3c8;font-size:13px}
+header .steps{margin-left:auto;display:flex;gap:6px;font-size:12.5px;color:#9fb3c8}
+header .step{padding:5px 12px;border:1px solid #2c4159;border-radius:99px}
+header .step.on{background:#1d4ed8;color:#fff;border-color:#1d4ed8}
+
+main{max-width:1280px;margin:0 auto;padding:26px 24px 60px}
+
+/* ---------- landing ---------- */
+#drop{border:2px dashed #b8c7d9;border-radius:14px;background:var(--card);padding:54px 20px;
+  text-align:center;cursor:pointer;transition:.15s;box-shadow:var(--shadow)}
+#drop:hover,#drop.over{border-color:var(--accent);background:var(--accent-soft)}
+#drop .big{font-size:19px;font-weight:600;margin-bottom:6px}
+#drop .hint{color:var(--muted);font-size:13.5px}
+#demos h3{margin:30px 0 12px;font-size:15px;color:var(--muted);font-weight:600}
+.demo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px}
+.demo-card{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+  cursor:pointer;transition:.15s;box-shadow:var(--shadow)}
+.demo-card:hover{transform:translateY(-2px);border-color:var(--accent)}
+.demo-card img{width:100%;height:120px;object-fit:cover;display:block;background:#fff}
+.demo-card .nm{padding:8px 10px;font-size:12.5px;color:var(--muted)}
+
+/* ---------- loading ---------- */
+#loading{position:fixed;inset:0;background:rgba(14,28,47,.55);display:none;
+  align-items:center;justify-content:center;z-index:50;backdrop-filter:blur(2px)}
+#loading .box{background:var(--card);border-radius:14px;padding:34px 44px;text-align:center;box-shadow:var(--shadow)}
+.spin{width:42px;height:42px;border:4px solid var(--line);border-top-color:var(--accent);
+  border-radius:50%;animation:sp .8s linear infinite;margin:0 auto 16px}
+@keyframes sp{to{transform:rotate(360deg)}}
+#loadmsg{color:var(--muted);font-size:13.5px;margin-top:4px}
+
+/* ---------- results ---------- */
+#results{display:none}
+.banner{border-radius:12px;padding:18px 22px;display:flex;align-items:center;gap:18px;
+  box-shadow:var(--shadow);margin-bottom:18px}
+.banner.pass{background:var(--pass-bg);border:1px solid #bfe5cb}
+.banner.fail{background:var(--fail-bg);border:1px solid #f2c4c0}
+.banner .verdict{font-size:22px;font-weight:800}
+.banner.pass .verdict{color:var(--pass)} .banner.fail .verdict{color:var(--fail)}
+.banner .detail{color:var(--muted);font-size:13.5px}
+.banner .chips{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.chip{background:var(--card);border:1px solid var(--line);border-radius:99px;
+  padding:5px 13px;font-size:12.5px;color:var(--muted)}
+.chip b{color:var(--ink)}
+.btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;
+  padding:8px 15px;font-size:13.5px;cursor:pointer;transition:.12s;font-weight:500}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.1);color:#fff}
+
+.cols{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:18px;align-items:start}
+@media(max-width:980px){.cols{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+  box-shadow:var(--shadow);overflow:hidden}
+.card h2{font-size:14px;font-weight:700;padding:13px 18px;border-bottom:1px solid var(--line);
+  color:var(--ink);display:flex;align-items:center;gap:10px}
+.card h2 .right{margin-left:auto;display:flex;gap:8px}
+.card .body{padding:16px 18px}
+
+/* viewer */
+#imgwrap{position:relative;background:#fff;text-align:center}
+#annotated{max-width:100%;display:block;margin:0 auto;cursor:zoom-in}
+.classbar{display:flex;gap:8px;flex-wrap:wrap;padding:12px 18px;border-bottom:1px solid var(--line)}
+.cls-chip{border:1.5px solid var(--line);border-radius:99px;padding:4px 13px;font-size:12.5px;
+  cursor:pointer;color:var(--muted);user-select:none;transition:.12s}
+.cls-chip.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+
+/* checklist */
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink)}
+th{font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);background:#f8fafc}
+td .pt{font-weight:600}
+td .req{color:var(--muted);font-size:12px}
+.status{font-weight:700;font-size:12px;border-radius:6px;padding:3px 9px;white-space:nowrap;display:inline-block}
+.status.PASS{color:var(--pass);background:var(--pass-bg)}
+.status.FAIL{color:var(--fail);background:var(--fail-bg)}
+.status.INFO{color:var(--info);background:var(--info-bg)}
+.status.NA{color:var(--na);background:var(--na-bg)}
+.ovr-btn{margin-top:6px;font-size:12px;color:var(--accent);background:none;border:none;
+  cursor:pointer;padding:0;text-decoration:underline}
+.ovr-row td{background:#fbfdff}
+.ovr-box{display:flex;gap:8px;margin-top:6px}
+.ovr-box input[type=text]{flex:1;border:1px solid var(--line);border-radius:6px;
+  padding:6px 9px;font-size:12.5px}
+.ovr-note{font-size:12px;color:var(--pass);margin-top:5px}
+
+/* evidence */
+#evidence{margin-top:18px}
+.ev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+.ev-card{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
+.ev-card img{width:100%;display:block;background:#fff;border-bottom:1px solid var(--line)}
+.ev-card .cap{padding:9px 12px;font-size:12.5px}
+.ev-card .cap .v{font-weight:700}
+.badge{font-size:11px;font-weight:700;border-radius:5px;padding:2px 7px;margin-left:6px}
+.badge.ok{color:var(--pass);background:var(--pass-bg)}
+.badge.warn{color:#92400e;background:#fef3e2}
+.badge.bad{color:var(--fail);background:var(--fail-bg)}
+.empty{color:var(--muted);font-size:13.5px;padding:8px 0}
+
+/* lightbox */
+#lightbox{position:fixed;inset:0;background:rgba(10,16,24,.9);display:none;z-index:60;
+  align-items:center;justify-content:center;cursor:zoom-out;overflow:auto}
+#lightbox img{max-width:96vw;max-height:94vh}
+
+footer{color:var(--muted);font-size:12px;text-align:center;margin-top:36px}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo">📐 Draw<span>QC</span></div>
+    <div class="sub">Automated engineering-drawing checklist · YOLO11 + OCR</div>
+  </div>
+  <div class="steps">
+    <div class="step" id="step1">1 · Upload</div>
+    <div class="step" id="step2">2 · Review</div>
+    <div class="step" id="step3">3 · Export</div>
+  </div>
+</header>
+
+<main>
+  <!-- ============ landing ============ -->
+  <section id="landing">
+    <div id="drop">
+      <div class="big">Drop a drawing here, or click to browse</div>
+      <div class="hint">PNG / JPG · full sheet works best · everything runs locally</div>
+      <input type="file" id="file" accept=".png,.jpg,.jpeg" hidden>
+    </div>
+    <div id="demos" style="display:none">
+      <h3>…or pick a sample drawing</h3>
+      <div class="demo-grid" id="demo-grid"></div>
+    </div>
+  </section>
+
+  <!-- ============ results ============ -->
+  <section id="results">
+    <div class="banner" id="banner">
+      <div>
+        <div class="verdict" id="verdict"></div>
+        <div class="detail" id="verdict-detail"></div>
+      </div>
+      <div class="chips" id="chips"></div>
+      <button class="btn" onclick="reset()">↩ New drawing</button>
+    </div>
+
+    <div class="cols">
+      <div class="card">
+        <h2>Detected parts
+          <span class="right"><button class="btn" onclick="downloadPNG()">⬇ PNG</button></span>
+        </h2>
+        <div class="classbar" id="classbar"></div>
+        <div id="imgwrap"><img id="annotated" onclick="lightbox()"></div>
+      </div>
+
+      <div class="card">
+        <h2>Checklist report
+          <span class="right">
+            <button class="btn" onclick="downloadCSV()">⬇ CSV</button>
+            <button class="btn primary" onclick="printReport()">🖨 Report</button>
+          </span>
+        </h2>
+        <table>
+          <thead><tr><th>#</th><th>Check point</th><th>Detected</th><th>Values</th><th>Result</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" id="evidence">
+      <h2>🔎 Evidence — what OCR actually read</h2>
+      <div class="body">
+        <div id="ra-ev"></div>
+        <div id="dup-ev" style="margin-top:18px"></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>DrawQC · model: YOLO11n custom-trained on public engineering drawings · OCR: EasyOCR + Tesseract</footer>
+</main>
+
+<div id="loading"><div class="box">
+  <div class="spin"></div>
+  <div style="font-weight:600">Analyzing drawing</div>
+  <div id="loadmsg">detect → read values → check rules…</div>
+</div></div>
+
+<div id="lightbox" onclick="this.style.display='none'"><img id="lightbox-img"></div>
+
+<script>
+let A = null;                  // current analysis payload
+let overrides = {};            // rowId -> {on:true, reason:""}
+let shownClasses = new Set();
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---------- steps ---------- */
+function setStep(n){ [1,2,3].forEach(i => $('step'+i).classList.toggle('on', i<=n)); }
+setStep(1);
+
+/* ---------- landing ---------- */
+const drop = $('drop'), fileInput = $('file');
+drop.onclick = () => fileInput.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over');
+  if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); };
+fileInput.onchange = () => fileInput.files[0] && upload(fileInput.files[0]);
+
+fetch('/api/demos').then(r => r.json()).then(list => {
+  if (!list.length) return;
+  $('demos').style.display = 'block';
+  $('demo-grid').innerHTML = list.map(d =>
+    `<div class="demo-card" onclick="runDemo('${esc(d.name)}')">
+       <img src="${d.url}" loading="lazy"><div class="nm">${esc(d.name)}</div></div>`).join('');
+});
+
+/* ---------- analyze ---------- */
+async function upload(file){
+  const fd = new FormData(); fd.append('file', file);
+  await runAnalysis(fetch('/api/analyze', {method:'POST', body:fd}));
+}
+async function runDemo(name){
+  await runAnalysis(fetch('/api/analyze_demo?name=' + encodeURIComponent(name)));
+}
+async function runAnalysis(promise){
+  $('loading').style.display = 'flex';
+  try {
+    const r = await promise;
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    A = await r.json();
+    overrides = {};
+    shownClasses = new Set(A.classes);
+    $('landing').style.display = 'none';
+    $('results').style.display = 'block';
+    setStep(2);
+    renderAll(true);
+  } catch (e) {
+    alert('Could not analyze: ' + e.message);
+  } finally {
+    $('loading').style.display = 'none';
+  }
+}
+function reset(){
+  A = null;
+  $('results').style.display = 'none';
+  $('landing').style.display = 'block';
+  fileInput.value = '';
+  setStep(1);
+}
+
+/* ---------- rows with overrides applied ---------- */
+function effectiveRows(){
+  return A.rows.map(r => {
+    const o = overrides[r.id];
+    if (r.status === 'FAIL' && o && o.on) {
+      const note = 'accepted by reviewer' + (o.reason ? ': ' + o.reason : '');
+      return {...r, status:'PASS', overridden:true,
+              values: (r.values && r.values !== '—') ? r.values + ' — ' + note : note};
+    }
+    return {...r};
+  });
+}
+
+/* ---------- render ---------- */
+function renderAll(fresh){
+  const rows = effectiveRows();
+  const passed = rows.filter(r => r.status==='PASS').length;
+  const failed = rows.filter(r => r.status==='FAIL').length;
+  const nOvr = rows.filter(r => r.overridden).length;
+  const ok = failed === 0 && passed + failed > 0;
+
+  const b = $('banner');
+  b.className = 'banner ' + (ok ? 'pass' : 'fail');
+  $('verdict').textContent = ok ? '✓ PASS' : '⚠ NEEDS REVIEW';
+  $('verdict-detail').textContent =
+    `${passed}/${passed+failed} checks passed` +
+    (nOvr ? ` · ${nOvr} by reviewer override` : '') + ` · ${esc(A.source)}`;
+  $('chips').innerHTML =
+    `<span class="chip"><b>${A.n_detections}</b> detections</span>` +
+    Object.entries(A.counts).map(([k,v]) => `<span class="chip">${esc(k)} <b>${v}</b></span>`).join('');
+
+  $('rows').innerHTML = rows.map(r => {
+    const canOvr = r.status === 'FAIL' && !r.overridden;
+    const o = overrides[r.id] || {};
+    return `<tr class="${r.overridden ? 'ovr-row' : ''}">
+      <td>${r.id}</td>
+      <td><div class="pt">${esc(r.point)}</div><div class="req">required: ${esc(r.required)}</div>
+        ${canOvr ? (o.open
+          ? `<div class="ovr-box">
+               <input type="text" id="ovr-in-${r.id}" placeholder="reason (recorded in report)"
+                      value="${esc(o.reason||'')}">
+               <button class="btn" onclick="acceptOvr(${r.id})">Accept</button>
+             </div>`
+          : `<button class="ovr-btn" onclick="openOvr(${r.id})">✏ override — mark as acceptable</button>`) : ''}
+        ${r.overridden ? `<div class="ovr-note">✓ accepted by reviewer
+            <button class="ovr-btn" onclick="undoOvr(${r.id})">undo</button></div>` : ''}
+      </td>
+      <td>${esc(r.detected)}</td>
+      <td>${esc(r.values)}</td>
+      <td><span class="status ${r.status}">${r.status}${r.overridden ? ' ✎' : ''}</span></td>
+    </tr>`;
+  }).join('');
+
+  if (fresh){
+    $('annotated').src = 'data:image/png;base64,' + A.annotated;
+    $('classbar').innerHTML = A.classes.map(c =>
+      `<span class="cls-chip on" id="cc-${c}" onclick="toggleClass('${c}')">${esc(c)}</span>`).join('');
+    renderEvidence();
+  }
+  setStep(3);
+}
+
+function openOvr(id){ overrides[id] = {...(overrides[id]||{}), open:true}; renderAll(false); }
+function acceptOvr(id){
+  overrides[id] = {on:true, reason: $('ovr-in-'+id).value.trim()};
+  renderAll(false);
+}
+function undoOvr(id){ delete overrides[id]; renderAll(false); }
+
+/* ---------- class filter ---------- */
+async function toggleClass(c){
+  shownClasses.has(c) ? shownClasses.delete(c) : shownClasses.add(c);
+  $('cc-'+c).classList.toggle('on', shownClasses.has(c));
+  const r = await fetch(`/api/render?id=${A.id}&classes=${[...shownClasses].join(',')}`);
+  if (r.ok) $('annotated').src = 'data:image/png;base64,' + (await r.json()).annotated;
+}
+
+/* ---------- evidence ---------- */
+function renderEvidence(){
+  const ra = A.ra_evidence;
+  $('ra-ev').innerHTML = !ra.length
+    ? '<div class="empty">No surface-roughness symbols detected.</div>'
+    : `<div style="font-size:13px;color:var(--muted);margin-bottom:10px">
+         Surface-roughness readings — allowed Ra: <span class="mono">{${A.ra_allowed.join(', ')}}</span></div>
+       <div class="ev-grid">` + ra.map((r,i) => {
+        const shown = r.grade || r.value;
+        const badge = r.valid ? `<span class="badge ok">Ra ${r.matched} ✓</span>`
+          : r.value !== null ? `<span class="badge warn">not in spec</span>`
+          : `<span class="badge bad">unreadable</span>`;
+        return `<div class="ev-card">
+          ${r.crop ? `<img src="data:image/png;base64,${r.crop}">` : ''}
+          <div class="cap">#${i+1} read <span class="v">${shown !== null ? esc(shown) : '—'}</span>${badge}</div>
+        </div>`; }).join('') + '</div>';
+
+  const d = A.dup_evidence;
+  $('dup-ev').innerHTML = !d.length
+    ? '<div class="empty">No repeated dimension values.</div>'
+    : d.map(g => `
+      <div style="font-size:13px;margin:10px 0 8px"><b class="mono">${g.value}</b> appears
+        <b>${g.crops.length}×</b> — same feature twice is an error; different features are
+        fine (use override on check #6).</div>
+      <div class="ev-grid">` + g.crops.map(c => `
+        <div class="ev-card">${c.img ? `<img src="data:image/png;base64,${c.img}">` : ''}
+          <div class="cap">read “${esc(c.text)}”</div></div>`).join('') + '</div>').join('');
+}
+
+/* ---------- exports ---------- */
+function downloadPNG(){
+  const a = document.createElement('a');
+  a.href = $('annotated').src; a.download = 'annotated.png'; a.click();
+}
+function downloadCSV(){
+  const rows = effectiveRows();
+  const csv = [['Sl.No','Check point','Detected','Detected values','Required','Result']]
+    .concat(rows.map(r => [r.id, r.point, r.detected, r.values, r.required,
+                           r.status + (r.overridden ? ' (overridden)' : '')]))
+    .map(line => line.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+  a.download = 'checklist_report.csv'; a.click();
+}
+function printReport(){
+  const rows = effectiveRows();
+  const passed = rows.filter(r=>r.status==='PASS').length;
+  const failed = rows.filter(r=>r.status==='FAIL').length;
+  const w = window.open('', '_blank');
+  w.document.write(`<!doctype html><html><head><title>Checklist Report</title><style>
+    body{font-family:-apple-system,Segoe UI,Arial,sans-serif;margin:32px;color:#1a1a1a}
+    h1{font-size:21px;margin-bottom:2px} .sub{color:#666;font-size:13px;margin-bottom:14px}
+    .v{font-size:17px;font-weight:700;margin:10px 0}
+    table{border-collapse:collapse;width:100%;margin:14px 0}
+    th,td{border:1px solid #ccc;padding:7px 9px;font-size:13px;text-align:left}
+    th{background:#f2f2f2}
+    .PASS{color:#15803d;font-weight:700}.FAIL{color:#b91c1c;font-weight:700}
+    .INFO{color:#1d4ed8}.NA{color:#888} img{max-width:100%;border:1px solid #ddd;margin-top:6px}
+  </style></head><body>
+  <h1>Engineering Drawing — Checklist Report</h1>
+  <div class="sub">Source: ${esc(A.source)} · Generated: ${new Date().toLocaleString()}
+    · Detections: ${A.n_detections}</div>
+  <div class="v">Verdict: ${failed===0?'PASS':'NEEDS REVIEW'} (${passed}/${passed+failed} checks passed)</div>
+  <table><tr><th>Sl.No</th><th>Check point</th><th>Detected</th><th>Detected values</th>
+  <th>Required</th><th>Result</th></tr>
+  ${rows.map(r=>`<tr><td>${r.id}</td><td>${esc(r.point)}</td><td>${esc(r.detected)}</td>
+    <td>${esc(r.values)}</td><td>${esc(r.required)}</td>
+    <td class="${r.status}">${r.status}${r.overridden?' (overridden)':''}</td></tr>`).join('')}
+  </table>
+  <h3>Annotated drawing</h3><img src="data:image/png;base64,${A.annotated}">
+  </body></html>`);
+  w.document.close();
+  setTimeout(() => w.print(), 350);
+}
+
+/* ---------- lightbox ---------- */
+function lightbox(){
+  $('lightbox-img').src = $('annotated').src;
+  $('lightbox').style.display = 'flex';
+}
+</script>
+</body>
+</html>
