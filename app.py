@@ -1,17 +1,24 @@
 """Streamlit demo: upload a drawing -> annotated image + auto-filled checklist.
 
 Run:  streamlit run app.py   (or ./scripts/serve.sh)
+
+UX flow (for a first-time judge):
+  pick drawing -> verdict banner -> checklist (Detected|Values|Required|Result)
+  -> Evidence tab proves each reading with the actual crop OCR saw.
+Heavy analysis is cached by (image, confidence): sliders/toggles redraw instantly.
 """
 import csv
-import glob
+import hashlib
 import html
 import io
+import glob
 import os
 import tempfile
 
 import streamlit as st
 
-from src.pipeline import run, load_config
+from src.pipeline import analyze, render_annotated, load_config
+from src.ocr import crop_box_padded
 from src.report_html import build_html
 
 st.set_page_config(page_title="Drawing Checklist Automation", page_icon="📐", layout="wide")
@@ -22,13 +29,33 @@ _BG = {"PASS": "#e6f4ea", "FAIL": "#fce8e6", "NA": "#fff", "INFO": "#e8f0fe"}
 
 st.markdown("""
 <style>
-.block-container{padding-top:1.6rem;max-width:1300px}
-[data-testid="stMetricValue"]{font-size:1.6rem}
-table.cl{border-collapse:collapse;width:100%;font-size:14px}
-table.cl th,table.cl td{border:1px solid #e3e3e3;padding:9px 11px;text-align:left}
+.block-container{padding-top:1.4rem;max-width:1340px}
+[data-testid="stMetricValue"]{font-size:1.5rem}
+table.cl{border-collapse:collapse;width:100%;font-size:13.5px}
+table.cl th,table.cl td{border:1px solid #e3e3e3;padding:8px 10px;text-align:left}
 table.cl th{background:#f4f6f8;font-weight:600}
 </style>
 """, unsafe_allow_html=True)
+
+
+# ---------- cached heavy work ----------
+@st.cache_data(show_spinner=False)
+def cached_analyze(image_path: str, conf: float, _key: str):
+    """Detect + OCR + checklist, cached on (image content, confidence)."""
+    cfg = load_config()
+    cfg["conf_threshold"] = conf
+    return analyze(image_path, cfg)
+
+
+def stable_tmp_path(data: bytes, suffix=".png") -> str:
+    """Write upload to a content-addressed temp path (same bytes -> same path),
+    so Streamlit reruns hit the analysis cache instead of re-detecting."""
+    h = hashlib.sha1(data).hexdigest()[:16]
+    path = os.path.join(tempfile.gettempdir(), f"drawing_{h}{suffix}")
+    if not os.path.exists(path):
+        with open(path, "wb") as f:
+            f.write(data)
+    return path
 
 
 def rows_to_csv(rows) -> str:
@@ -44,12 +71,12 @@ def checklist_html(rows) -> str:
     trs = ""
     for r in rows:
         s = r["status"]
-        trs += (f"<tr style='background:{_BG.get(s,'#fff')}'>"
+        trs += (f"<tr style='background:{_BG.get(s, '#fff')}'>"
                 f"<td>{r['id']}</td><td>{html.escape(r['point'])}</td>"
                 f"<td>{html.escape(str(r['detected']))}</td>"
                 f"<td>{html.escape(str(r['values']))}</td>"
                 f"<td>{html.escape(str(r['required']))}</td>"
-                f"<td style='color:{_COLOR[s]};font-weight:700'>{_EMOJI.get(s,'')} {s}</td>"
+                f"<td style='color:{_COLOR[s]};font-weight:700'>{_EMOJI.get(s, '')} {s}</td>"
                 f"</tr>")
     return ("<table class='cl'><thead><tr><th>#</th><th>Check point</th>"
             "<th>Detected</th><th>Detected values</th><th>Required</th><th>Result</th>"
@@ -77,9 +104,8 @@ with st.sidebar:
     if src == "Upload":
         up = st.file_uploader("Upload a drawing", type=["png", "jpg", "jpeg"])
         if up:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                tmp.write(up.read())
-                image_path, source_name = tmp.name, up.name
+            image_path = stable_tmp_path(up.getvalue())
+            source_name = up.name
     elif demo_imgs:
         pick = st.selectbox("Pick a sample", demo_imgs,
                             format_func=lambda p: os.path.basename(p))
@@ -88,25 +114,36 @@ with st.sidebar:
     st.divider()
     conf = st.slider("Detection confidence", 0.05, 0.90,
                      float(config.get("conf_threshold", 0.30)), 0.05,
-                     help="Lower = more boxes. 0.30 = model's peak-F1 point.")
-    config["conf_threshold"] = conf
+                     help="Lower = more boxes. 0.30 = the model's peak-F1 point.")
     st.markdown("**Show on image**")
     show = [c for c in all_classes if st.checkbox(c, value=True, key=f"s_{c}")]
     st.divider()
-    st.caption("Model: YOLO11n · classes: " + ", ".join(all_classes))
+    st.caption("Model: YOLO11n (custom-trained) · OCR: EasyOCR + Tesseract")
 
 # ---------------- header ----------------
 st.title("Engineering Drawing — Automated Checklist")
 st.caption("The model detects parts & reads values → the QC checklist fills itself.")
+
+with st.expander("ℹ️ How it works"):
+    st.markdown("""
+1. **Detect** — a YOLO11 model (trained on 5k+ public engineering drawings) finds
+   dimensions, notes, GD&T symbols and surface-roughness symbols.
+2. **Read** — each roughness symbol is cropped, cleaned and OCR'd (EasyOCR + Tesseract)
+   to extract its **Ra value**.
+3. **Check** — a config-driven rule engine compares what was found against what the
+   checklist requires (presence, counts, allowed Ra values).
+4. **Report** — the filled checklist + annotated drawing export as CSV / printable HTML.
+""")
 
 if not image_path:
     st.info("⬅️ Upload a drawing or pick a demo sample to begin.")
     st.stop()
 
 try:
-    with st.spinner("Analyzing drawing…"):
-        annotated, rows, debug = run(image_path, config, show_classes=set(show))
-except Exception as e:  # noqa: BLE001
+    with st.spinner("Analyzing drawing… (cached after first run)"):
+        detections, rows, debug = cached_analyze(image_path, conf, source_name)
+    annotated = render_annotated(image_path, detections, set(show))
+except Exception as e:  # noqa: BLE001 - never crash the demo
     st.error(f"Could not process this image: {e}")
     st.stop()
 
@@ -126,7 +163,8 @@ m1, m2, m3, m4 = st.columns(4)
 m1.metric("Checks passed", f"{passed}/{actionable}" if actionable else "—")
 m2.metric("Failed", failed)
 m3.metric("Detections", debug["n_detections"])
-m4.metric("Confidence", f"{conf:.2f}")
+m4.metric("Ra values read", sum(1 for r in debug.get("ra_readings", [])
+                                if r["value"] is not None))
 if actionable:
     st.progress(passed / actionable)
 
@@ -150,23 +188,36 @@ with right:
                        source_name), "checklist_report.html", "text/html",
                        use_container_width=True)
 
-# ---------------- details ----------------
-tab_val, tab_counts, tab_dbg = st.tabs(["🔎 Values (Ra)", "📊 Per-class", "🐞 Debug"])
-with tab_val:
+# ---------------- evidence + details ----------------
+tab_ev, tab_counts, tab_dbg = st.tabs(["🔎 Evidence (Ra readings)", "📊 Per-class", "🐞 Debug"])
+
+with tab_ev:
     ra = debug.get("ra_readings", [])
     if not ra:
         st.info("No surface-roughness symbols detected (nothing to value-check).")
     else:
-        st.caption(f"Each roughness symbol → OCR the Ra value → check vs allowed set "
-                   f"{config.get('ra_allowed', [])}.")
-        st.table([{
-            "#": i + 1,
-            "Read (raw)": r["raw"] or "—",
-            "Ra value": r["value"] if r["value"] is not None else "unreadable",
-            "Matches spec": "✅ " + str(r["matched"]) if r["valid"] else "❌",
-        } for i, r in enumerate(ra)])
+        st.caption(f"Each roughness symbol below is the exact crop OCR analyzed. "
+                   f"Allowed Ra set: {config.get('ra_allowed', [])}")
+        cols_per_row = 3
+        for start in range(0, len(ra), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for col, (i, r) in zip(cols, enumerate(ra[start:start + cols_per_row], start)):
+                with col:
+                    try:
+                        st.image(crop_box_padded(image_path, r["box"], target_w=300),
+                                 use_container_width=True)
+                    except Exception:  # noqa: BLE001
+                        st.caption("(crop unavailable)")
+                    if r["valid"]:
+                        st.success(f"#{i + 1} · read **{r['value']}** → Ra {r['matched']} ✓")
+                    elif r["value"] is not None:
+                        st.warning(f"#{i + 1} · read **{r['value']}** — not in spec")
+                    else:
+                        st.error(f"#{i + 1} · unreadable (raw: '{r['raw'] or '—'}')")
+
 with tab_counts:
     counts = debug.get("counts", {})
     st.bar_chart(counts) if counts else st.info("Nothing detected.")
+
 with tab_dbg:
     st.json(debug)

@@ -69,5 +69,6 @@ def read_ra_values(image_path, roughness_boxes, ra_allowed):
             "value": value,
             "matched": matched,
             "valid": matched is not None,
+            "box": [round(v, 1) for v in box],   # so the UI can show the crop
         })
     return readings

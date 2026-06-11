@@ -4,6 +4,7 @@ streamlit>=1.30         # demo UI
 pillow>=10.0            # image draw
 pyyaml>=6.0             # config.yaml
 pytesseract>=0.3.10     # OCR wrapper (needs system 'tesseract' binary installed too)
+easyocr>=1.7            # deep-learning OCR for tiny Ra values (uses torch from ultralytics)
 
 # Dataset download (optional, for pulling Roboflow exports programmatically)
 roboflow>=1.1.0

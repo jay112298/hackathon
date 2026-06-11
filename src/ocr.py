@@ -42,34 +42,53 @@ def _read_score(text: str) -> int:
     return sum(ch.isdigit() for ch in text) + (2 if "." in text else 0)
 
 
-def ocr_box_padded(image_path: str, box, pad_frac: float = 1.2):
-    """OCR an expanded, cleaned-up crop around a small symbol box.
+def crop_box_padded(image_path: str, box, pad_frac: float = 1.2, target_w: int = 480):
+    """Return an upscaled, contrast-boosted grayscale crop around a box.
 
-    Roughness Ra text (e.g. '3.2') is tiny — the decimal point and 2nd digit get
-    lost. To fix: pad the box generously, upscale a lot, binarize for crisp
-    glyphs, then try several page-seg modes (with and without a digit whitelist)
-    and keep the richest read. Returns (text, status).
+    Shared by OCR (clean input) and the UI (evidence thumbnails of what OCR saw).
     """
     from PIL import ImageOps
-    try:
-        img = Image.open(image_path).convert("L")  # grayscale
-    except Exception as e:  # noqa: BLE001
-        return "", f"image open error: {e}"
-
+    img = Image.open(image_path).convert("L")
     W, H = img.size
     x1, y1, x2, y2 = [float(v) for v in box]
     bw, bh = x2 - x1, y2 - y1
     px, py = bw * pad_frac, bh * pad_frac
     crop = img.crop((max(0, int(x1 - px)), max(0, int(y1 - py)),
                      min(W, int(x2 + px)), min(H, int(y2 + py))))
-
     crop = ImageOps.autocontrast(crop)
-    # upscale hard so small glyphs (and the dot) survive
-    if crop.width < 480:
-        s = max(3, round(480 / max(1, crop.width)))
+    if crop.width < target_w:
+        s = max(2, round(target_w / max(1, crop.width)))
         crop = crop.resize((crop.width * s, crop.height * s), Image.LANCZOS)
-    binar = crop.point(lambda p: 255 if p > 128 else 0)  # high-contrast B/W
+    return crop
 
+
+_EASYOCR_READER = None
+
+
+def _easyocr_read(crop) -> str:
+    """Digit read via EasyOCR (deep-learning OCR — much better than tesseract on
+    tiny / rotated technical text). Returns '' if easyocr isn't installed."""
+    global _EASYOCR_READER
+    try:
+        import easyocr
+        import numpy as np
+    except ImportError:
+        return ""
+    if _EASYOCR_READER is None:
+        _EASYOCR_READER = easyocr.Reader(["en"], gpu=False, verbose=False)
+    arr = np.array(crop.convert("RGB"))
+    best = ""
+    # rotation_info catches Ra values written sideways along a surface
+    for text in _EASYOCR_READER.readtext(
+            arr, allowlist="0123456789.", rotation_info=[90, 180, 270], detail=0):
+        if _read_score(text) > _read_score(best):
+            best = text
+    return best
+
+
+def _tesseract_read(crop):
+    """Digit read via tesseract across psm modes. Returns (best, status)."""
+    binar = crop.point(lambda p: 255 if p > 128 else 0)  # high-contrast B/W
     whitelist = "-c tessedit_char_whitelist=0123456789."
     best = ""
     for image in (binar, crop):
@@ -77,7 +96,24 @@ def ocr_box_padded(image_path: str, box, pad_frac: float = 1.2):
             for wl in (whitelist, ""):
                 text, status = _ocr_pil(image, config=f"--psm {psm} {wl}".strip())
                 if "not installed" in status or "missing" in status:
-                    return "", status   # tooling absent -> stop
+                    return best, status
                 if _read_score(text) > _read_score(best):
                     best = text
     return best, "ok"
+
+
+def ocr_box_padded(image_path: str, box, pad_frac: float = 1.2):
+    """OCR the area around a small symbol box.
+
+    EasyOCR first (deep-learning, handles tiny/rotated digits), tesseract as
+    backup — the richest digit read wins. Returns (text, status).
+    """
+    try:
+        crop = crop_box_padded(image_path, box, pad_frac)
+    except Exception as e:  # noqa: BLE001
+        return "", f"image open error: {e}"
+
+    easy = _easyocr_read(crop)
+    tess, status = _tesseract_read(crop)
+    best = easy if _read_score(easy) >= _read_score(tess) else tess
+    return best, ("ok" if best else status)
