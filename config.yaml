@@ -39,6 +39,22 @@ rules:
 
 # Surface-roughness Ra values allowed by the company spec (micron).
 ra_allowed: [0.2, 0.4, 0.8, 1.6, 3.2, 6.3, 12.5]
+
+# ISO 1302 roughness-grade equivalence: a drawing that says "N8" means Ra 3.2.
+# A read N-grade is converted to its Ra and judged against ra_allowed.
+n_grade_map:
+  N1: 0.025
+  N2: 0.05
+  N3: 0.1
+  N4: 0.2
+  N5: 0.4
+  N6: 0.8
+  N7: 1.6
+  N8: 3.2
+  N9: 6.3
+  N10: 12.5
+  N11: 25
+  N12: 50
 # ra_strict: true  => Ra check is PASS/FAIL against ra_allowed (real company use).
 # ra_strict: false => Ra check is INFORMATIONAL (reads values, flags spec-matches,
 #   never fails). Keep false for public demo drawings (their Ra differ + OCR noisy).
@@ -73,6 +89,10 @@ checklist:
     point: "Notes block present"
     type: presence_optional
     requires_class: note
+  - id: 6
+    point: "No repeated dimension values (double-dimensioning)"
+    type: duplicate_dims
+    requires_class: dimension
 
   # --- re-enable after hand-labeling title_block ---
   # - id: 5

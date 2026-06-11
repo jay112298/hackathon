@@ -63,7 +63,8 @@ def rows_to_csv(rows) -> str:
     w = csv.writer(buf)
     w.writerow(["Sl.No", "Check point", "Detected", "Detected values", "Required", "Result"])
     for r in rows:
-        w.writerow([r["id"], r["point"], r["detected"], r["values"], r["required"], r["status"]])
+        status = r["status"] + (" (overridden)" if r.get("overridden") else "")
+        w.writerow([r["id"], r["point"], r["detected"], r["values"], r["required"], status])
     return buf.getvalue()
 
 
@@ -71,12 +72,13 @@ def checklist_html(rows) -> str:
     trs = ""
     for r in rows:
         s = r["status"]
+        label = f"{_EMOJI.get(s, '')} {s}" + (" ✎" if r.get("overridden") else "")
         trs += (f"<tr style='background:{_BG.get(s, '#fff')}'>"
                 f"<td>{r['id']}</td><td>{html.escape(r['point'])}</td>"
                 f"<td>{html.escape(str(r['detected']))}</td>"
                 f"<td>{html.escape(str(r['values']))}</td>"
                 f"<td>{html.escape(str(r['required']))}</td>"
-                f"<td style='color:{_COLOR[s]};font-weight:700'>{_EMOJI.get(s, '')} {s}</td>"
+                f"<td style='color:{_COLOR[s]};font-weight:700'>{label}</td>"
                 f"</tr>")
     return ("<table class='cl'><thead><tr><th>#</th><th>Check point</th>"
             "<th>Detected</th><th>Detected values</th><th>Required</th><th>Result</th>"
@@ -129,10 +131,13 @@ with st.expander("ℹ️ How it works"):
 1. **Detect** — a YOLO11 model (trained on 5k+ public engineering drawings) finds
    dimensions, notes, GD&T symbols and surface-roughness symbols.
 2. **Read** — each roughness symbol is cropped, cleaned and OCR'd (EasyOCR + Tesseract)
-   to extract its **Ra value**.
+   to extract its **Ra value or ISO N-grade** (N8 = Ra 3.2). One extra full-sheet OCR
+   pass reads every dimension's text.
 3. **Check** — a config-driven rule engine compares what was found against what the
-   checklist requires (presence, counts, allowed Ra values).
-4. **Report** — the filled checklist + annotated drawing export as CSV / printable HTML.
+   checklist requires (presence, counts, allowed Ra values, repeated dimensions).
+4. **Review** — a human can override any failed check (with a reason) — e.g. the same
+   value on two *different* features is fine. Overrides are noted in the export.
+5. **Report** — the filled checklist + annotated drawing export as CSV / printable HTML.
 """)
 
 if not image_path:
@@ -147,6 +152,20 @@ except Exception as e:  # noqa: BLE001 - never crash the demo
     st.error(f"Could not process this image: {e}")
     st.stop()
 
+# ---------------- reviewer overrides ----------------
+# Widgets live under the checklist (below); their state is read here, *before*
+# the verdict/metrics, so an accepted check counts as PASS everywhere
+# (banner, metrics, CSV, HTML). Keys are per-image so a new drawing resets them.
+img_key = hashlib.sha1(image_path.encode()).hexdigest()[:8]
+for r in rows:
+    if r["status"] == "FAIL" and st.session_state.get(f"ovr_{img_key}_{r['id']}"):
+        reason = (st.session_state.get(f"ovr_reason_{img_key}_{r['id']}") or "").strip()
+        r["status"] = "PASS"
+        r["overridden"] = True
+        note = "accepted by reviewer" + (f": {reason}" if reason else "")
+        r["values"] = note if str(r["values"]) in ("—", "") else f"{r['values']} — {note}"
+n_overridden = sum(1 for r in rows if r.get("overridden"))
+
 # ---------------- verdict + metrics ----------------
 passed = sum(1 for r in rows if r["status"] == "PASS")
 failed = sum(1 for r in rows if r["status"] == "FAIL")
@@ -155,7 +174,8 @@ actionable = passed + failed
 if debug["n_detections"] == 0:
     st.warning("No detections. Lower the confidence slider, or try a clearer full sheet.")
 elif failed == 0 and actionable:
-    st.success(f"✅ PASS — all {passed} checks satisfied.")
+    st.success(f"✅ PASS — all {passed} checks satisfied."
+               + (f" ({n_overridden} by reviewer override)" if n_overridden else ""))
 elif actionable:
     st.warning(f"⚠️ NEEDS REVIEW — {failed} of {actionable} checks failed.")
 
@@ -180,6 +200,22 @@ with left:
 with right:
     st.subheader("Checklist report")
     st.markdown(checklist_html(rows), unsafe_allow_html=True)
+
+    # reviewer overrides: a flag can be legitimate (e.g. the same dimension on
+    # two different features) — let a human accept it, with a recorded reason
+    reviewable = [r for r in rows if r["status"] == "FAIL" or r.get("overridden")]
+    if reviewable:
+        with st.expander(f"✏️ Reviewer overrides ({n_overridden} applied)",
+                         expanded=failed > 0):
+            st.caption("Accept a failed check to record a manual PASS. "
+                       "The reason goes into the CSV/HTML report.")
+            for r in reviewable:
+                c1, c2 = st.columns([1, 2])
+                c1.checkbox(f"Accept #{r['id']}", key=f"ovr_{img_key}_{r['id']}",
+                            help=r["point"])
+                c2.text_input("Reason", key=f"ovr_reason_{img_key}_{r['id']}",
+                              placeholder="reason (recorded in report)",
+                              label_visibility="collapsed")
     st.write("")
     d1, d2 = st.columns(2)
     d1.download_button("⬇️ CSV", rows_to_csv(rows), "checklist_report.csv",
@@ -189,7 +225,8 @@ with right:
                        use_container_width=True)
 
 # ---------------- evidence + details ----------------
-tab_ev, tab_counts, tab_dbg = st.tabs(["🔎 Evidence (Ra readings)", "📊 Per-class", "🐞 Debug"])
+tab_ev, tab_dim, tab_counts, tab_dbg = st.tabs(
+    ["🔎 Evidence (Ra readings)", "📏 Dimension values", "📊 Per-class", "🐞 Debug"])
 
 with tab_ev:
     ra = debug.get("ra_readings", [])
@@ -208,12 +245,44 @@ with tab_ev:
                                  use_container_width=True)
                     except Exception:  # noqa: BLE001
                         st.caption("(crop unavailable)")
+                    shown = r.get("grade") or r["value"]
                     if r["valid"]:
-                        st.success(f"#{i + 1} · read **{r['value']}** → Ra {r['matched']} ✓")
+                        st.success(f"#{i + 1} · read **{shown}** → Ra {r['matched']} ✓")
                     elif r["value"] is not None:
-                        st.warning(f"#{i + 1} · read **{r['value']}** — not in spec")
+                        st.warning(f"#{i + 1} · read **{shown}** — not in spec")
                     else:
                         st.error(f"#{i + 1} · unreadable (raw: '{r['raw'] or '—'}')")
+
+with tab_dim:
+    dimr = debug.get("dim_readings", [])
+    dups = debug.get("dim_duplicates", {})
+    if not dimr:
+        st.info("No dimension text read (no dimensions detected, or check #6 disabled).")
+    else:
+        readable = [r for r in dimr if r["value"] is not None]
+        st.caption(f"{len(readable)}/{len(dimr)} dimension boxes had readable text "
+                   "(one full-sheet OCR pass).")
+        if dups:
+            st.warning(f"{len(dups)} value(s) repeat — possible double-dimensioning. "
+                       "If they belong to different features, accept check #6 in "
+                       "Reviewer overrides.")
+            for v, rs in sorted(dups.items()):
+                st.markdown(f"**{v}** appears **{len(rs)}×**:")
+                cols = st.columns(min(4, len(rs)))
+                for col, r in zip(cols, rs):
+                    with col:
+                        try:
+                            st.image(crop_box_padded(image_path, r["box"],
+                                                     pad_frac=0.4, target_w=260),
+                                     use_container_width=True)
+                        except Exception:  # noqa: BLE001
+                            pass
+                        st.caption(f"read: “{r['text']}”")
+        else:
+            st.success("No repeated dimension values.")
+        if readable:
+            st.caption("All values read: "
+                       + ", ".join(str(v) for v in sorted(r["value"] for r in readable)))
 
 with tab_counts:
     counts = debug.get("counts", {})

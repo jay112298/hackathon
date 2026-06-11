@@ -13,7 +13,7 @@ from .detect import detect, first_box, count_by_class
 from .ocr import ocr_region
 from .report import build_report
 from .annotate import annotate
-from .values import read_ra_values
+from .values import read_ra_values, read_dimension_values, find_duplicate_dims
 
 _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
 
@@ -43,13 +43,22 @@ def analyze(image_path: str, config: dict | None = None):
     tb_box = first_box(detections, "title_block")
     ocr_text, ocr_status = ocr_region(image_path, tb_box) if tb_box else ("", "no title_block detected")
 
-    # 3) value-level checks: read Ra values off roughness symbols
+    # 3) value-level checks: read Ra / N-grades off roughness symbols
     rough_boxes = [d["xyxy"] for d in detections if d["cls"] == "surface_roughness"]
-    ra_readings = read_ra_values(image_path, rough_boxes, config.get("ra_allowed", [])) \
-        if rough_boxes else []
+    ra_readings = read_ra_values(image_path, rough_boxes, config.get("ra_allowed", []),
+                                 config.get("n_grade_map", {})) if rough_boxes else []
+
+    # 3b) read every dimension's text (one full-sheet OCR pass) + flag repeats.
+    # Only runs if the checklist actually has a duplicate_dims item.
+    dim_boxes = [d["xyxy"] for d in detections if d["cls"] == "dimension"]
+    want_dups = any(i.get("type") == "duplicate_dims" for i in config.get("checklist", []))
+    dim_readings = read_dimension_values(image_path, dim_boxes) \
+        if (dim_boxes and want_dups) else []
+    dim_duplicates = find_duplicate_dims(dim_readings)
 
     # 4) build checklist
-    rows = build_report(config, detections, ocr_text, model_loaded, ra_readings)
+    rows = build_report(config, detections, ocr_text, model_loaded, ra_readings,
+                        dim_readings, dim_duplicates)
 
     debug = {
         "detection_status": det_status,
@@ -58,6 +67,8 @@ def analyze(image_path: str, config: dict | None = None):
         "n_detections": len(detections),
         "counts": count_by_class(detections),
         "ra_readings": ra_readings,
+        "dim_readings": dim_readings,
+        "dim_duplicates": dim_duplicates,
     }
     return detections, rows, debug
 

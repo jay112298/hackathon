@@ -1316,3 +1316,38 @@ filters *drawing only* — detection + checklist still use everything).
   uncomment the 2 rows in `config.yaml`. Code is already built and waiting.
 - **Boost `note` / `gdt_symbol`** — more labels or a bigger model (`yolo11s`).
 - **PDF/multi-page input, batch mode** — nice-to-have, not required for the demo.
+
+---
+
+## Chapter 24 — N-grades, duplicate dimensions, reviewer overrides
+
+Three features that came straight out of using the tool on real sheets.
+
+### 24.1 ISO N-grade roughness (N8 = Ra 3.2)
+Many drawings write roughness as an ISO 1302 *grade* (`N8`) instead of a raw Ra
+number. The fix is a lookup, not ML: `config.yaml` gains `n_grade_map`
+(N1=0.025 … N12=50), and `read_ra_values()` checks for an N-grade **first** —
+before the float pass, because otherwise the `8` inside `N8` would parse as
+Ra 8 (wrong). Both OCR allowlists gained the letter `N`, and `_read_score()`
+gives an `N<digit>` read a bonus so engines that see the grade win the vote.
+The report shows `N8 (Ra 3.2)` so the conversion stays visible.
+
+### 24.2 Duplicate-dimension flag (one full-sheet OCR pass)
+Double-dimensioning is a classic drawing error. We already detect every
+dimension box — so read them. OCRing 50 separate crops would be slow; instead
+`easyocr_read_full()` does ONE pass over the whole sheet, then each text word
+is assigned to the dimension box its center falls in (`read_dimension_values`).
+`find_duplicate_dims()` groups parsed values; any value appearing 2+ times
+fails the new checklist item #6 (`type: duplicate_dims`). The 📏 tab shows the
+crops of each repeat side by side so you can judge them.
+
+### 24.3 Reviewer overrides — the human stays in charge
+A repeated value is often *legitimate* (same dimension on two different
+features). So a flagged check must be overridable: under the checklist, every
+FAIL row gets an "Accept" checkbox + reason field. Streamlit subtlety: the
+widgets render *below* the metrics, but their state is read from
+`st.session_state` at the top of the script — a rerun happens on every click,
+so the banner/metrics/CSV/HTML all see the override. Keys include the image
+hash, so switching drawings resets the overrides. Overridden rows export as
+`PASS (overridden)` with the reviewer's reason — an audit trail, not a silent
+edit.

@@ -18,10 +18,13 @@ def _row(item, detected="—", values="—", required="—", status="NA"):
 
 
 def build_report(config: dict, detections: list, ocr_text: str, model_loaded: bool,
-                 ra_readings: list | None = None):
+                 ra_readings: list | None = None, dim_readings: list | None = None,
+                 dim_duplicates: dict | None = None):
     counts = count_by_class(detections)
     rules_cfg = config.get("rules", {})
     ra_readings = ra_readings or []
+    dim_readings = dim_readings or []
+    dim_duplicates = dim_duplicates or {}
     rows = []
 
     for item in config["checklist"]:
@@ -44,13 +47,32 @@ def build_report(config: dict, detections: list, ocr_text: str, model_loaded: bo
                 rows.append(_row(item, detected=f"0/{total} read", values="unreadable",
                                  required=req, status="INFO"))
             else:
-                vals = ", ".join(str(r["value"]) for r in read)
+                # show the N-grade if that's what the drawing says (N8 = Ra 3.2)
+                vals = ", ".join(
+                    f"{r['grade']} (Ra {r['value']})" if r.get("grade") else str(r["value"])
+                    for r in read)
                 if strict:
                     status = "PASS" if len(valid) == len(read) else "FAIL"
                 else:
                     status = "INFO"
                 rows.append(_row(item, detected=f"{len(read)}/{total} read", values=vals,
                                  required=req + f"  ({len(valid)} match)", status=status))
+
+        elif itype == "duplicate_dims":
+            total = counts.get("dimension", 0)
+            n_read = sum(1 for r in dim_readings if r["value"] is not None)
+            if total == 0:
+                rows.append(_row(item, detected="0 dimensions",
+                                 required="no repeated values", status="NA"))
+            elif not dim_duplicates:
+                rows.append(_row(item, detected=f"{n_read}/{total} read",
+                                 values="no repeats",
+                                 required="no repeated values", status="PASS"))
+            else:
+                vals = ", ".join(f"{v} ×{len(rs)}"
+                                 for v, rs in sorted(dim_duplicates.items()))
+                rows.append(_row(item, detected=f"{n_read}/{total} read", values=vals,
+                                 required="no repeated values", status="FAIL"))
 
         elif itype in ("presence", "presence_optional", "count", "count_info"):
             n = counts.get(item["requires_class"], 0)
