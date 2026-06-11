@@ -32,8 +32,9 @@ st.markdown("""
 .block-container{padding-top:1.4rem;max-width:1340px}
 [data-testid="stMetricValue"]{font-size:1.5rem}
 table.cl{border-collapse:collapse;width:100%;font-size:13.5px}
-table.cl th,table.cl td{border:1px solid #e3e3e3;padding:8px 10px;text-align:left}
+table.cl th,table.cl td{border:1px solid #e3e3e3;padding:8px 10px;text-align:left;color:#1a1a1a}
 table.cl th{background:#f4f6f8;font-weight:600}
+table.cl tr{background:#fff}
 </style>
 """, unsafe_allow_html=True)
 

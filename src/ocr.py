@@ -69,23 +69,35 @@ def crop_box_padded(image_path: str, box, pad_frac: float = 1.2, target_w: int =
 _EASYOCR_READER = None
 
 
-def _easyocr_read(crop) -> str:
-    """Digit read via EasyOCR (deep-learning OCR — much better than tesseract on
-    tiny / rotated technical text). Returns '' if easyocr isn't installed."""
+def _easyocr_texts(crop) -> list[str]:
+    """All EasyOCR reads of a crop, plain orientation first.
+
+    Plain read goes first because the rotated pass hallucinates digits on
+    blurry crops; it stays as a later candidate for genuinely sideways text.
+    'N' in the allowlist so ISO grades (N8 = Ra 3.2) survive the read.
+    """
     global _EASYOCR_READER
     try:
         import easyocr
         import numpy as np
     except ImportError:
-        return ""
+        return []
     if _EASYOCR_READER is None:
         _EASYOCR_READER = easyocr.Reader(["en"], gpu=False, verbose=False)
     arr = np.array(crop.convert("RGB"))
+    texts = []
+    for kwargs in ({}, {"rotation_info": [90, 180, 270]}):
+        for text in _EASYOCR_READER.readtext(
+                arr, allowlist="0123456789.N", detail=0, **kwargs):
+            if text and text not in texts:
+                texts.append(text)
+    return texts
+
+
+def _easyocr_read(crop) -> str:
+    """Single richest EasyOCR read (back-compat for callers that want one)."""
     best = ""
-    # rotation_info catches Ra values written sideways along a surface;
-    # 'N' in the allowlist so ISO grades (N8 = Ra 3.2) survive the read
-    for text in _EASYOCR_READER.readtext(
-            arr, allowlist="0123456789.N", rotation_info=[90, 180, 270], detail=0):
+    for text in _easyocr_texts(crop):
         if _read_score(text) > _read_score(best):
             best = text
     return best
@@ -107,20 +119,39 @@ def _tesseract_read(crop):
     return best, "ok"
 
 
-def ocr_box_padded(image_path: str, box, pad_frac: float = 1.2):
-    """OCR the area around a small symbol box.
+def ocr_box_candidates(image_path: str, box):
+    """Ordered candidate texts for the value at a symbol box -> (texts, status).
 
-    EasyOCR first (deep-learning, handles tiny/rotated digits), tesseract as
-    backup — the richest digit read wins. Returns (text, status).
+    Order encodes trust: tight crop before wide (a wide pad swallows
+    neighboring dimension text — the classic '1.6 read as 40' failure),
+    EasyOCR before tesseract, unrotated before rotated. The caller
+    (values.py) walks the list and keeps the first candidate that matches
+    the spec, so one garbage read can't shadow a good one.
     """
-    try:
-        crop = crop_box_padded(image_path, box, pad_frac)
-    except Exception as e:  # noqa: BLE001
-        return "", f"image open error: {e}"
+    cands, status = [], "ok"
+    for pad in (0.5, 1.2):
+        try:
+            crop = crop_box_padded(image_path, box, pad)
+        except Exception as e:  # noqa: BLE001
+            return [], f"image open error: {e}"
+        for t in _easyocr_texts(crop):
+            if t not in cands:
+                cands.append(t)
+        tess, tstatus = _tesseract_read(crop)
+        if tess and tess not in cands:
+            cands.append(tess)
+        if "not installed" in tstatus or "missing" in tstatus:
+            status = tstatus
+    return cands, status
 
-    easy = _easyocr_read(crop)
-    tess, status = _tesseract_read(crop)
-    best = easy if _read_score(easy) >= _read_score(tess) else tess
+
+def ocr_box_padded(image_path: str, box, pad_frac: float = 1.2):
+    """Single richest read around a symbol box (back-compat). (text, status)."""
+    cands, status = ocr_box_candidates(image_path, box)
+    best = ""
+    for t in cands:
+        if _read_score(t) > _read_score(best):
+            best = t
     return best, ("ok" if best else status)
 
 
